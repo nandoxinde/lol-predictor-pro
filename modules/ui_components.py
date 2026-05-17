@@ -1,0 +1,848 @@
+"""
+ui_components.py v2.1 — LoL Predictor Pro
+Visual escuro profissional. Logos via Special:FilePath (sem hash).
+Lista estilo BetBoom com logos reais + fallback inicial colorido.
+"""
+import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+from datetime import datetime, timezone, timedelta
+
+TZ_BRT = timezone(timedelta(hours=-3))
+
+def _now():
+    return datetime.now(tz=TZ_BRT)
+
+# ─── Logo — escudo SVG puro (sem URLs externas que podem quebrar) ─────
+def _logo_html(team_name: str, tier_color: str, size: int = 32) -> str:
+    """
+    Escudo circular com gradiente neon + inicial do time.
+    Sem dependência de URL externa — nunca quebra.
+    """
+    init = team_name[:2].upper()
+    sz   = str(size)
+    fs   = str(max(10, int(size * 0.40)))
+    # Gradiente baseado na cor do tier
+    c1   = tier_color
+    # Escurece o gradiente
+    c2   = "#090C14"
+    return (
+        f'<div style="width:{sz}px;height:{sz}px;border-radius:50%;'
+        f'flex-shrink:0;overflow:hidden;'
+        f'background:linear-gradient(135deg,{c1}55 0%,{c2} 100%);'
+        f'border:1.5px solid {c1}88;'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-size:{fs}px;font-weight:900;color:{c1};'
+        f'font-family:Inter,sans-serif;'
+        f'text-shadow:0 0 8px {c1}99;'
+        f'box-shadow:0 0 10px {c1}33 inset;">'
+        f'{init}</div>'
+    )
+
+# ─── Tempo helpers ────────────────────────────────────────────────────
+def _fmt_time(match: dict) -> tuple:
+    """Retorna (label, cor, is_live)."""
+    if match.get("state") == "inProgress":
+        return "🔴 AO VIVO", "#EF4444", True
+    dt_str = match.get("datetime", "")
+    if not dt_str:
+        return match.get("datetime_brt", "--"), "#5A7090", False
+    try:
+        s   = dt_str.replace("Z", "+00:00").replace(" ", "T")
+        dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
+        diff = (dt - _now()).total_seconds()
+        if diff <= 0:
+            return "🔴 AO VIVO", "#EF4444", True
+        h = int(diff // 3600); m = int((diff % 3600) // 60)
+        if diff <= 3600:
+            return f"⏱ {h}h {m:02d}min" if h else f"⏱ {m}min", "#F59E0B", False
+        hoje   = _now().date()
+        amanha = hoje + timedelta(days=1)
+        if dt.date() == hoje:
+            return "Hoje " + dt.strftime("%H:%M"), "#5A7090", False
+        elif dt.date() == amanha:
+            return "Amanhã " + dt.strftime("%H:%M"), "#5A7090", False
+        return dt.strftime("%d/%m %H:%M"), "#5A7090", False
+    except Exception:
+        return match.get("datetime_brt", "--"), "#5A7090", False
+
+# ─── CSS ──────────────────────────────────────────────────────────────
+_CSS = """<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+html,body,.stApp,[data-testid="stAppViewContainer"]{
+    background:#0B0D11!important;
+    font-family:'Inter',sans-serif!important;
+    color:#C8D4E8!important;}
+.main .block-container{
+    padding-top:0!important;
+    padding-left:14px!important;
+    padding-right:14px!important;
+    max-width:1400px!important;}
+section[data-testid="stSidebar"],footer,#MainMenu,
+[data-testid="stDecoration"],.stDeployButton{display:none!important;}
+.stButton>button{
+    font-family:'Inter',sans-serif!important;
+    font-weight:700!important;font-size:13px!important;
+    border-radius:6px!important;border:none!important;
+    transition:all .15s ease!important;}
+.stButton>button[kind="primary"]{
+    background:#1565C0!important;color:#fff!important;}
+.stButton>button[kind="primary"]:hover{
+    background:#1976D2!important;
+    box-shadow:0 0 14px rgba(21,101,192,.5)!important;}
+.stButton>button[kind="secondary"]{
+    background:#131926!important;color:#7A8FAA!important;
+    border:1px solid #1E2D45!important;}
+.stButton>button[kind="secondary"]:hover{
+    background:#1A2235!important;color:#C8D4E8!important;
+    border-color:#1565C0!important;}
+.stTextInput input,.stNumberInput input{
+    background:#0F1520!important;border:1px solid #1E2D45!important;
+    color:#C8D4E8!important;font-family:'Inter',sans-serif!important;
+    border-radius:5px!important;padding:7px 12px!important;}
+.stTextInput input:focus{border-color:#1565C0!important;outline:none!important;}
+.stSelectbox>div>div{
+    background:#0F1520!important;border:1px solid #1E2D45!important;
+    color:#C8D4E8!important;border-radius:5px!important;}
+[data-testid="metric-container"]{
+    background:#0F1520!important;border:1px solid #1E2D45!important;
+    border-radius:7px!important;padding:10px!important;}
+[data-testid="metric-container"] label{
+    color:#3A4D65!important;font-size:10px!important;
+    letter-spacing:.8px!important;text-transform:uppercase!important;}
+details summary{
+    background:#0F1520!important;border:1px solid #1E2D45!important;
+    border-radius:5px!important;color:#7A8FAA!important;}
+.stDataFrame{border:1px solid #1E2D45!important;border-radius:8px!important;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:#0B0D11;}
+::-webkit-scrollbar-thumb{background:#1E2D45;border-radius:2px;}
+hr{border-color:#1A2235!important;margin:6px 0!important;}
+@keyframes live-pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
+.live-dot{animation:live-pulse 1.2s ease infinite;}
+</style>"""
+
+def apply_custom_css():
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+# ─── Header ───────────────────────────────────────────────────────────
+def render_header(banca_atual, banca_ini, meta, username="Fernando"):
+    pct   = min(100., max(0., (banca_atual - banca_ini) / max(meta - banca_ini, 1) * 100))
+    lucro = banca_atual - banca_ini
+    lc    = "#22C55E" if lucro >= 0 else "#EF4444"
+    ls    = f"+R${lucro:.2f}" if lucro >= 0 else f"-R${abs(lucro):.2f}"
+
+    c_logo, _, c_meta, c_user = st.columns([2, 3, 3, 3])
+    with c_logo:
+        st.markdown(
+            '<span style="font-size:20px;font-weight:900;color:#fff;">Lol</span>'
+            '<span style="font-size:20px;font-weight:900;color:#1565C0;"> Pro</span>'
+            '<span style="background:#1565C0;color:#fff;font-size:9px;font-weight:700;'
+            'padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle;">v2.0</span>',
+            unsafe_allow_html=True)
+    with c_meta:
+        st.markdown(
+            f'<div style="text-align:right;line-height:1.6;">'
+            f'<span style="font-size:10px;color:#3A4D65;letter-spacing:.5px;">META R$ {meta:.0f}</span><br>'
+            f'<div style="background:#131926;border-radius:3px;height:4px;overflow:hidden;margin:3px 0;">'
+            f'<div style="background:#22C55E;height:100%;width:{pct:.1f}%;border-radius:3px;"></div></div>'
+            f'<span style="font-size:10px;color:{lc};">{pct:.0f}% · {ls}</span>'
+            f'</div>', unsafe_allow_html=True)
+    with c_user:
+        st.markdown(
+            f'<div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;">'
+            f'<div style="text-align:right;">'
+            f'<div style="font-size:14px;font-weight:700;color:#1A9FFF;">R$ {banca_atual:.2f}</div>'
+            f'<div style="font-size:10px;color:{lc};">{ls}</div></div>'
+            f'<div style="width:32px;height:32px;border-radius:50%;'
+            f'background:linear-gradient(135deg,#1565C0,#0D3A7A);'
+            f'display:flex;align-items:center;justify-content:center;'
+            f'font-size:14px;font-weight:900;color:#fff;flex-shrink:0;">'
+            f'{username[0].upper()}</div>'
+            f'<div>'
+            f'<div style="font-size:12px;font-weight:700;color:#C8D4E8;">{username}</div>'
+            f'<div style="font-size:10px;color:#3A4D65;">{pct:.0f}% da meta</div>'
+            f'</div></div>', unsafe_allow_html=True)
+    st.markdown('<hr style="margin:8px 0 0;">', unsafe_allow_html=True)
+
+# ─── Nav ──────────────────────────────────────────────────────────────
+def render_nav(current: str):
+    tabs = [("operacao","🚀  Operação"),("banca","💰  Gestão de Banca"),("wiki","🔍  Wiki-Pro")]
+    cols = st.columns([1,1,1,5])
+    for i,(k,label) in enumerate(tabs):
+        with cols[i]:
+            if st.button(label, key="nav_"+k, use_container_width=True,
+                         type="primary" if current==k else "secondary"):
+                st.session_state.aba = k
+                st.session_state.selected_match = None
+                st.rerun()
+
+# ─── Hero ─────────────────────────────────────────────────────────────
+_STADIUM = "https://wallpapercave.com/wp/wp9306424.jpg"
+
+def render_hero(n_live: int, n_next: int, source: str = ""):
+    live_txt = f"🔴 {n_live} ao vivo  ·  " if n_live > 0 else ""
+    demo_txt = "  · ⚠️ Dados demo (Liquipedia bloqueou este servidor)" if source == "demo" else ""
+    st.markdown(
+        f'<div style="background:linear-gradient(180deg,'
+        f'rgba(11,13,17,.25) 0%,rgba(11,13,17,.82) 55%,rgba(11,13,17,1) 100%),'
+        f'url({_STADIUM}) center/cover no-repeat;'
+        f'border-radius:10px;padding:22px 20px 14px;margin-bottom:12px;'
+        f'border:1px solid #1A2D4A;">'
+        f'<div style="font-size:22px;font-weight:900;color:#fff;'
+        f'text-shadow:0 2px 10px rgba(0,0,0,.9);">League of Legends</div>'
+        f'<div style="font-size:11px;color:#4A6080;margin-top:4px;">'
+        f'{live_txt}📅 {n_next} próximos · Cargo API · cache 5min{demo_txt}</div>'
+        f'</div>', unsafe_allow_html=True)
+
+# ─── Filtros de tempo ─────────────────────────────────────────────────
+def filter_matches_by_time(matches: list, time_filter: str) -> list:
+    if time_filter == "live":
+        return [m for m in matches if m.get("state") == "inProgress"]
+    if time_filter == "all":
+        return matches
+    limits = {"1h":60,"3h":180,"6h":360,"12h":720,"1d":1440,"2d":2880,"3d":4320}
+    max_min = limits.get(time_filter, 9999)
+    result = []
+    for m in matches:
+        if m.get("state") == "inProgress":
+            result.append(m); continue
+        dt_str = m.get("datetime","")
+        if not dt_str: continue
+        try:
+            s   = dt_str.replace("Z","+00:00").replace(" ","T")
+            dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
+            mins = (dt - _now()).total_seconds() / 60
+            if 0 <= mins <= max_min:
+                result.append(m)
+        except Exception:
+            pass
+    return result
+
+# ─── Lista de partidas estilo BetBoom ─────────────────────────────────
+def render_match_list(matches: list, analysis_map: dict,
+                       bankroll_mgr, selected_id=None):
+    from modules.data_fetcher import DataFetcher
+    import hashlib
+
+    if not matches:
+        st.markdown(
+            '<div style="background:#0F1520;border:1px dashed #1E2D45;border-radius:8px;'
+            'padding:40px;text-align:center;margin:12px 0;">'
+            '<div style="font-size:32px;margin-bottom:8px;">📭</div>'
+            '<div style="font-size:13px;color:#1E2D45;">Nenhum jogo neste filtro.</div>'
+            '</div>', unsafe_allow_html=True)
+        return
+
+    # Agrupa por liga
+    by_league: dict = {}
+    for m in matches:
+        lg = m.get("league_display", m.get("league","Torneio"))
+        by_league.setdefault(lg, []).append(m)
+
+    tc = {"S":"#F59E0B","A":"#1A9FFF","B":"#3A4D65"}
+
+    for lg_display, lg_matches in by_league.items():
+        # Cabeçalho da liga
+        st.markdown(
+            f'<div style="background:#0D1520;border-left:3px solid #1565C0;'
+            f'padding:7px 14px;margin-bottom:2px;'
+            f'display:flex;justify-content:space-between;align-items:center;">'
+            f'<span style="font-size:13px;font-weight:700;color:#C8D4E8;">{lg_display}</span>'
+            f'<span style="font-size:11px;color:#3A4D65;">{len(lg_matches)} jogos</span>'
+            f'</div>', unsafe_allow_html=True)
+
+        for m in lg_matches:
+            t1 = m["team1"]; t2 = m["team2"]
+            t1t = DataFetcher.resolve_tier(t1)
+            t2t = DataFetcher.resolve_tier(t2)
+            time_label, time_color, is_live = _fmt_time(m)
+            bo  = m.get("best_of","3")
+            mid = hashlib.md5((t1+t2).encode()).hexdigest()[:8]
+
+            # Stats para odds
+            an  = analysis_map.get(f"{t1}|{t2}", {})
+            t1s = an.get("team1_stats", {})
+            t2s = an.get("team2_stats", {})
+            t1wr = t1s.get("winrate", 0.5); t2wr = t2s.get("winrate", 0.5)
+            tot  = t1wr + t2wr
+            o1   = round(tot / t1wr, 2) if t1wr > 0 else 2.00
+            o2   = round(tot / t2wr, 2) if t2wr > 0 else 2.00
+
+            # Cores do card
+            is_sel = (selected_id == mid)
+            bg  = "#141C2E" if is_sel else "#0F1520"
+            bdr = "#1565C0" if is_sel else "#1A2235"
+
+            # Live dot animado
+            live_dot = (
+                '<span class="live-dot" style="display:inline-block;width:7px;height:7px;'
+                'background:#EF4444;border-radius:50%;margin-right:5px;"></span>'
+                if is_live else ""
+            )
+
+            # Logos
+            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32)
+            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32)
+
+            # Palpite principal (confiança)
+            dc = an.get("_dc")  # pré-calculado se disponível
+            pick_html = ""
+            preds = an.get("predictions",[])
+            if preds:
+                top = preds[0]
+                conf = top["confidence"]
+                cc   = "#22C55E" if conf>=80 else ("#F59E0B" if conf>=65 else "#EF4444")
+                pick_html = (
+                    f'<span style="font-size:10px;font-weight:700;color:{cc};'
+                    f'letter-spacing:.5px;">● {top.get("suggestion",top.get("market",""))[:30]}'
+                    f'  {conf:.0f}%</span>'
+                )
+
+            # HTML da linha completa
+            row = (
+                f'<div style="background:{bg};border:1px solid {bdr};border-radius:7px;'
+                f'margin-bottom:3px;padding:10px 14px;'
+                f'display:flex;align-items:center;gap:12px;">'
+
+                # Time 1
+                f'<div style="display:flex;align-items:center;gap:8px;flex:2.5;min-width:0;">'
+                + logo1 +
+                f'<div style="min-width:0;">'
+                f'<div style="font-size:13px;font-weight:700;color:#C8D4E8;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t1}</div>'
+                f'<div style="font-size:10px;color:#3A4D65;">Nível {t1t}</div>'
+                f'</div></div>'
+
+                # Centro: horário + palpite
+                f'<div style="text-align:center;flex:2;min-width:90px;">'
+                f'{live_dot}'
+                f'<div style="font-size:13px;font-weight:800;color:{time_color};">{time_label}</div>'
+                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">BoBo{bo}</div>'
+                f'{pick_html}'
+                f'</div>'
+
+                # Time 2
+                f'<div style="display:flex;align-items:center;gap:8px;'
+                f'flex:2.5;justify-content:flex-end;min-width:0;">'
+                f'<div style="text-align:right;min-width:0;">'
+                f'<div style="font-size:13px;font-weight:700;color:#C8D4E8;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t2}</div>'
+                f'<div style="font-size:10px;color:#3A4D65;">Nível {t2t}</div>'
+                f'</div>'
+                + logo2 +
+                f'</div>'
+
+                # Odds
+                f'<div style="display:flex;gap:4px;flex-shrink:0;">'
+                f'<div style="background:#131926;border:1px solid #1E2D45;border-radius:4px;'
+                f'padding:6px 10px;text-align:center;min-width:48px;">'
+                f'<div style="font-size:9px;color:#3A4D65;">1</div>'
+                f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o1:.2f}</div>'
+                f'</div>'
+                f'<div style="background:#131926;border:1px solid #1E2D45;border-radius:4px;'
+                f'padding:6px 10px;text-align:center;min-width:48px;">'
+                f'<div style="font-size:9px;color:#3A4D65;">2</div>'
+                f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o2:.2f}</div>'
+                f'</div>'
+                f'</div>'
+                f'</div>'
+            )
+            st.markdown(row, unsafe_allow_html=True)
+
+            # Botão clicável
+            btn_label = f"🔍  {t1} vs {t2}"
+            if st.button(btn_label, key=f"row_{mid}",
+                         use_container_width=True,
+                         type="primary" if is_sel else "secondary"):
+                st.session_state.selected_match = m
+                st.rerun()
+
+# ─── Sala de Operação ─────────────────────────────────────────────────
+def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
+                           roster_t1, roster_t2, bankroll, target,
+                           twitch_channel=""):
+    from modules.data_fetcher import generate_decision_card
+    t1  = match["team1"]; t2 = match["team2"]
+    lg  = match.get("league_display", match.get("league",""))
+    lc  = match.get("league_code","_unknown")
+    bo  = match.get("best_of","3")
+    is_live = (match.get("state") == "inProgress")
+    tl, tc_col, _ = _fmt_time(match)
+    tc  = {"S":"#F59E0B","A":"#1A9FFF","B":"#3A4D65"}
+    t1t = __import__('modules.data_fetcher', fromlist=['DataFetcher']).DataFetcher.resolve_tier(t1)
+    t2t = __import__('modules.data_fetcher', fromlist=['DataFetcher']).DataFetcher.resolve_tier(t2)
+
+    # Voltar
+    col_bk, col_hd = st.columns([1,10])
+    with col_bk:
+        if st.button("← Voltar", key="back_op", type="secondary"):
+            st.session_state.selected_match = None; st.rerun()
+    with col_hd:
+        live_b = ('<span style="background:#EF444422;color:#EF4444;border:1px solid #EF444455;'
+                  'padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;margin-right:8px;">'
+                  '🔴 AO VIVO</span>' if is_live else "")
+        st.markdown(
+            f'<div style="padding:4px 0;">{live_b}'
+            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{t1}</span>'
+            f'<span style="color:#1A2D4A;font-size:15px;margin:0 10px;">vs</span>'
+            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{t2}</span>'
+            f'<span style="font-size:11px;color:#3A4D65;margin-left:12px;">'
+            f'{lg} · Bo{bo}</span></div>', unsafe_allow_html=True)
+
+    st.markdown('<hr style="margin:8px 0 12px;">', unsafe_allow_html=True)
+
+    dc = generate_decision_card(
+        t1, analysis["team1_stats"], analysis.get("team1_form",{}),
+        t2, analysis["team2_stats"], analysis.get("team2_form",{}),
+        lc, bankroll)
+
+    # Split: player (L) | mercados (R)
+    col_v, col_m = st.columns([3,2])
+    with col_v:
+        _render_twitch(twitch_channel or lc, t1, t2, lg)
+    with col_m:
+        _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2)
+
+    st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
+
+    # Stats + Rosters
+    cs, cr = st.columns(2)
+    with cs:
+        with st.expander("📊 Comparativo de Stats", expanded=True):
+            _render_stats(t1, analysis["team1_stats"], t2, analysis["team2_stats"])
+    with cr:
+        with st.expander("🧠 Análise do Sistema", expanded=False):
+            cmt = analysis.get("analyst_comment","")
+            if cmt:
+                st.markdown(
+                    f'<p style="font-size:13px;color:#7A8FAA;line-height:1.6;margin:0;">{cmt}</p>',
+                    unsafe_allow_html=True)
+    with st.expander(f"👥 Rosters — {t1} vs {t2}", expanded=False):
+        r1, r2 = st.tabs([f"👥 {t1}", f"👥 {t2}"])
+        with r1: _render_roster(roster_t1)
+        with r2: _render_roster(roster_t2)
+
+# ─── Player Twitch ────────────────────────────────────────────────────
+_TWITCH_CHANNELS = {
+    "lck":"lck","lpl":"lpl","lec":"lec","lcs":"lcs",
+    "cblol":"cblol","cblol_acad":"cblol","lck_cl":"lck",
+    "tcl":"tcl","vcs":"vcs","lla":"lla","ljl":"ljl",
+    "_unknown":"baiano","_default":"baiano",
+}
+
+def _resolve_channel(code_or_name: str) -> str:
+    # Código de liga → canal Twitch
+    if code_or_name in _TWITCH_CHANNELS:
+        return _TWITCH_CHANNELS[code_or_name]
+    # URL ou nome direto
+    ch = (code_or_name
+          .replace("https://www.twitch.tv/","")
+          .replace("https://twitch.tv/","")
+          .replace("twitch.tv/","")
+          .split("?")[0].split("/")[0].strip())
+    return ch or "baiano"
+
+def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
+    ch = st.session_state.get("twitch_custom","") or _resolve_channel(channel_or_code)
+    ch = _resolve_channel(ch)  # normaliza caso seja URL
+
+    label = f"🟣 twitch.tv/{ch}"
+    if t1 and t2: label += f"  ·  {t1} vs {t2}"
+
+    st.markdown(
+        f'<div style="background:#090C14;border:1px solid #1A2D4A;'
+        f'border-radius:8px 8px 0 0;padding:7px 13px;'
+        f'display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="font-size:11px;font-weight:700;color:#9146FF;">{label}</span>'
+        f'<span style="font-size:10px;color:#3A4D65;">{lg}</span></div>',
+        unsafe_allow_html=True)
+
+    # Twitch Embed SDK — sem erro de parent
+    components.html(
+        f'<!DOCTYPE html><html><head>'
+        f'<script src="https://embed.twitch.tv/embed/v1.js"></script>'
+        f'<style>*{{margin:0;padding:0;}}body{{background:#000;overflow:hidden;}}'
+        f'#e{{width:100%;height:{height}px;}}</style></head>'
+        f'<body><div id="e"></div><script>'
+        f'new Twitch.Embed("e",{{width:"100%",height:{height},channel:"{ch}",'
+        f'layout:"video",autoplay:false,muted:true,theme:"dark"}});'
+        f'</script></body></html>',
+        height=height+4, scrolling=False)
+
+    st.markdown(
+        '<div style="background:#090C14;border:1px solid #1A2D4A;border-top:none;'
+        'border-radius:0 0 8px 8px;padding:5px 12px;">', unsafe_allow_html=True)
+    new_ch = st.text_input(
+        "", value=ch, key=f"tw_{ch[:8]}",
+        placeholder="Canal Twitch (ex: baiano, lck, cblol)",
+        label_visibility="collapsed")
+    if new_ch.strip() and new_ch.strip() != ch:
+        st.session_state.twitch_custom = new_ch.strip(); st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ─── Painel de Mercados ───────────────────────────────────────────────
+def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
+    top   = dc.get("top_pick")
+    safe  = dc.get("safe_picks", [])
+    risky = dc.get("risky_picks", [])
+    preds = analysis.get("predictions", [])
+
+    st.markdown(
+        '<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:7px;'
+        'padding:9px 13px;margin-bottom:8px;">'
+        '<span style="font-size:11px;font-weight:700;color:#1565C0;letter-spacing:1px;">'
+        '🎯 MERCADOS DE APOSTA</span></div>', unsafe_allow_html=True)
+
+    if top:
+        conf = top["confidence"]
+        cc   = "#22C55E" if conf>=80 else ("#F59E0B" if conf>=65 else "#EF4444")
+        si   = bankroll_mgr.calculate_stake(top["probability"], 1.80, fixed_stake)
+        ordem = _fmt_order(top)
+
+        st.markdown(
+            f'<div style="background:#0F1520;border:2px solid {cc}44;'
+            f'border-radius:9px;padding:14px;margin-bottom:10px;">'
+            f'<div style="font-size:16px;font-weight:800;color:{cc};'
+            f'text-align:center;margin-bottom:3px;">{ordem}</div>'
+            f'<div style="font-size:10px;color:#3A4D65;text-align:center;'
+            f'margin-bottom:10px;">{top.get("market","")}</div>'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'align-items:center;margin-bottom:10px;">'
+            f'<div style="text-align:center;">'
+            f'<div style="font-size:30px;font-weight:900;color:{cc};">{conf:.0f}%</div>'
+            f'<div style="font-size:9px;color:#3A4D65;">Confiança</div></div>'
+            f'<div style="background:#090C14;border-radius:7px;'
+            f'padding:10px 14px;text-align:center;">'
+            f'<div style="font-size:22px;font-weight:800;color:#F59E0B;">'
+            f'R$ {si["stake"]:.2f}</div>'
+            f'<div style="font-size:9px;color:#3A4D65;">{si["stake_pct"]}% da banca</div>'
+            f'</div></div></div>', unsafe_allow_html=True)
+
+        if si["stake"] > bankroll * 0.10:
+            st.warning("⚠️ Stake >10% da banca.")
+
+        # Link BetBoom editável
+        bb_key = f"bb_{t1[:3]}{t2[:3]}"
+        bb_link = st.text_input(
+            "🔗 Link da partida na BetBoom:",
+            value="https://betboom.com/sport/esports",
+            key=bb_key,
+            placeholder="Cole o link direto aqui...")
+        bet_url = bb_link.strip() if bb_link.strip().startswith("http") else "https://betboom.com"
+        st.markdown(
+            f'<a href="{bet_url}" target="_blank" style="text-decoration:none;">'
+            f'<div style="background:linear-gradient(135deg,#1A5C32,#0D3520);'
+            f'border:1px solid #22C55E44;border-radius:7px;'
+            f'padding:10px;text-align:center;margin-bottom:10px;">'
+            f'<span style="font-size:14px;font-weight:800;color:#22C55E;">'
+            f'🎲 APOSTAR NA BETBOOM</span></div></a>', unsafe_allow_html=True)
+
+    # Apostas Seguras / Risco
+    if safe or risky:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                '<div style="font-size:10px;font-weight:700;color:#22C55E;'
+                'letter-spacing:1px;margin-bottom:5px;text-transform:uppercase;">'
+                '✅ APOSTAS SEGURAS</div>', unsafe_allow_html=True)
+            for d in safe[:3]:
+                cc2 = "#22C55E" if d["confidence"]>=80 else "#F59E0B"
+                st.markdown(
+                    f'<div style="background:#090C14;border-left:2px solid {cc2};'
+                    f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
+                    f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
+                    f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
+                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:26]}</span>'
+                    f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
+                    f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(
+                '<div style="font-size:10px;font-weight:700;color:#F59E0B;'
+                'letter-spacing:1px;margin-bottom:5px;text-transform:uppercase;">'
+                '⚡ APOSTAS DE RISCO</div>', unsafe_allow_html=True)
+            for d in risky[:3]:
+                cc2 = "#F59E0B" if d["confidence"]>=65 else "#EF4444"
+                st.markdown(
+                    f'<div style="background:#090C14;border-left:2px solid {cc2};'
+                    f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
+                    f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
+                    f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
+                    f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
+                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:26]}</span>'
+                    f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
+                    f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
+
+    # Calculadora de stake
+    if preds:
+        st.markdown(
+            '<div style="background:#090C14;border:1px solid #1A2D4A;'
+            'border-radius:6px;padding:8px 12px;margin:8px 0 6px;">'
+            '<span style="font-size:10px;font-weight:700;color:#1565C0;'
+            'letter-spacing:1px;">💹 CALCULADORA DE STAKE</span></div>',
+            unsafe_allow_html=True)
+        sel  = st.selectbox("", [p["market"] for p in preds],
+                             key="oc_sel", label_visibility="collapsed")
+        pred = next((p for p in preds if p["market"]==sel), preds[0])
+        fp   = pred["probability"]; fo = round(1/fp, 2)
+        ho   = st.number_input("Odd da casa:", min_value=1.01, value=fo,
+                                step=0.05, key="oc_inp", label_visibility="collapsed")
+        ev   = (fp*ho) - 1
+        si   = bankroll_mgr.calculate_stake(fp, ho, fixed_stake)
+        bc   = "#22C55E" if ev>=.05 else ("#F59E0B" if ev>=.01 else "#EF4444")
+        bl   = "✅ VALOR" if ev>=.05 else ("⚠️ MARGINAL" if ev>=.01 else "❌ SEM VALOR")
+        bw   = f"{min(100,max(4,ev*400)) if ev>0 else 4:.0f}"
+        st.markdown(
+            f'<div style="background:#131926;border-radius:4px;'
+            f'height:5px;margin:5px 0;overflow:hidden;">'
+            f'<div style="background:{bc};height:100%;width:{bw}%;border-radius:4px;"></div></div>'
+            f'<div style="display:flex;justify-content:space-between;">'
+            f'<span style="font-size:12px;font-weight:700;color:{bc};">{bl}</span>'
+            f'<span style="font-size:10px;color:#3A4D65;">EV {ev*100:+.1f}%</span></div>',
+            unsafe_allow_html=True)
+        cc1, cc2 = st.columns(2)
+        cc1.metric("Odd Justa", f"{fo:.2f}")
+        cc2.metric("Stake", f"R${si['stake']:.2f}")
+
+# ─── Stats comparativo ────────────────────────────────────────────────
+def _render_stats(t1n, t1, t2n, t2):
+    metrics = [
+        ("Win Rate",   "winrate",           True,  "{:.0%}"),
+        ("Kills/Jogo", "avg_kills",          True,  "{:.1f}"),
+        ("Gold @15",   "avg_golddiff15",     True,  "{:+.0f}g"),
+        ("Duração",    "avg_game_length",    False, "{:.0f}min"),
+        ("1st Blood",  "first_blood_rate",   True,  "{:.0%}"),
+        ("1st Dragon", "first_dragon_rate",  True,  "{:.0%}"),
+    ]
+    rows = ""
+    for label, key, hib, fmt in metrics:
+        v1 = t1.get(key,0) or 0; v2 = t2.get(key,0) or 0
+        a1 = (v1>v2) if hib else (v1<v2); a2 = (v2>v1) if hib else (v2<v1)
+        c1 = "#22C55E" if a1 else "#EF4444"; c2 = "#22C55E" if a2 else "#EF4444"
+        rows += (
+            f'<tr>'
+            f'<td style="text-align:right;padding:4px 10px;">'
+            f'<span style="color:{c1};font-weight:600;">{fmt.format(v1)}</span></td>'
+            f'<td style="text-align:center;font-size:10px;color:#1E2D45;'
+            f'padding:4px 6px;text-transform:uppercase;">{label}</td>'
+            f'<td style="text-align:left;padding:4px 10px;">'
+            f'<span style="color:{c2};font-weight:600;">{fmt.format(v2)}</span></td>'
+            f'</tr>'
+        )
+    st.markdown(
+        f'<table style="width:100%;border-collapse:collapse;font-size:13px;'
+        f'background:#090C14;border-radius:7px;overflow:hidden;border:1px solid #1A2D4A;">'
+        f'<thead><tr style="background:#0F1520;">'
+        f'<th style="text-align:right;padding:7px 10px;color:#1565C0;">{t1n}</th>'
+        f'<th style="text-align:center;padding:7px;color:#3A4D65;">Stat</th>'
+        f'<th style="text-align:left;padding:7px 10px;color:#1565C0;">{t2n}</th>'
+        f'</tr></thead><tbody style="color:#C8D4E8;">{rows}</tbody></table>',
+        unsafe_allow_html=True)
+
+# ─── Roster ───────────────────────────────────────────────────────────
+def _render_roster(roster):
+    from modules.stats_engine import get_mvp
+    if not roster: st.info("Roster indisponível."); return
+    mvp = get_mvp(roster)
+    for p in roster:
+        is_mvp = p["name"] == mvp.get("name","")
+        fc     = p.get("form_class","neutral")
+        fcc    = {"hot":"#F97316","good":"#22C55E","neutral":"#5A7090",
+                  "bad":"#F59E0B","cold":"#EF4444"}.get(fc,"#5A7090")
+        with st.expander(
+            f"{p['role']} · {p['name']}{'👑' if is_mvp else ''}"
+            f" — KDA {p['kda']} {p['form']}", expanded=is_mvp):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(
+                    f'<div style="font-size:13px;line-height:1.9;">'
+                    f'K/D/A: <span style="color:#22C55E;">{p["kills"]}</span>/'
+                    f'<span style="color:#EF4444;">{p["deaths"]}</span>/'
+                    f'<span style="color:#1A9FFF;">{p["assists"]}</span><br>'
+                    f'WR: <span style="color:#C8D4E8;">{p["winrate"]*100:.0f}%</span>'
+                    f'&nbsp;<span style="color:{fcc};">{p["form"]}</span>'
+                    f'</div>', unsafe_allow_html=True)
+            with c2:
+                for champ in p.get("comfort_picks",[]):
+                    bwr = p["champ_wr"].get(champ,.5)
+                    wc  = "#22C55E" if bwr>=.55 else ("#F59E0B" if bwr>=.45 else "#EF4444")
+                    st.markdown(
+                        f'<div style="background:#090C14;border-radius:4px;'
+                        f'padding:3px 8px;margin:2px 0;'
+                        f'display:flex;justify-content:space-between;">'
+                        f'<span style="font-size:12px;color:#C8D4E8;">{champ}</span>'
+                        f'<span style="color:{wc};font-weight:700;font-size:11px;">'
+                        f'{bwr*100:.0f}%</span></div>', unsafe_allow_html=True)
+
+# ─── Ordem de entrada ─────────────────────────────────────────────────
+def _fmt_order(top: dict) -> str:
+    m = top.get("market","").upper()
+    e = top.get("entry", top.get("suggestion",""))
+    if "VENCEDOR" in m or "ML" in m or "MONEYLINE" in m or "VITÓRIA" in m:
+        fav = e.replace("vence a partida","").replace("🏆","").replace("Vences","").strip()
+        fav = fav.split()[0] if fav.split() else "TIME"
+        return f"ENTRAR: {fav[:14]} ML"
+    if "HANDICAP" in m:
+        part = m.split("—")[-1].strip() if "—" in m else m.split("HANDICAP")[-1].strip()
+        return f"HCAP {part[:16]}"
+    if "PRIMEIRO ABATE" in m or "FIRST BLOOD" in m:
+        return f"🩸 FIRST BLOOD"
+    if "PRIMEIRO DRAGÃO" in m or "FIRST DRAGON" in m:
+        return f"🐉 PRIMEIRO DRAGÃO"
+    if "DURAÇÃO" in m and "27" in m: return "⏱ DURAÇÃO >27MIN"
+    if "DURAÇÃO" in m and "30" in m: return "⏳ DURAÇÃO >30MIN"
+    if "DURAÇÃO" in m: return "⏱ DURAÇÃO DO MAPA"
+    if "TORRES" in m:
+        line = m.split("OVER")[-1].strip()[:6] if "OVER" in m else ""
+        return f"🏰 OVER {line} TORRES"
+    if "TOTAL KILLS" in m or "KILLS O/U" in m:
+        return f"🎯 {m[:22]}"
+    if "GOLD" in m or "GD" in m: return "💰 GOLD DIFF @15"
+    return m[:24]
+
+# ─── Gestão de Banca ──────────────────────────────────────────────────
+def render_bankroll_tab(history, save_fn, calc_fn):
+    st.markdown(
+        '<h3 style="color:#C8D4E8;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        '💰 Gestão de Banca</h3>', unsafe_allow_html=True)
+
+    ci1, ci2, ci3 = st.columns(3)
+    with ci1:
+        ni = st.number_input("💵 Banca Inicial (R$)", min_value=1.,
+                              value=float(st.session_state.banca_ini), step=10., key="cfg_ini")
+    with ci2:
+        nm = st.number_input("🎯 Meta (R$)", min_value=ni+1.,
+                              value=max(float(st.session_state.banca_meta),ni+1.),
+                              step=50., key="cfg_meta")
+    with ci3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("✅ Aplicar", key="btn_cfg", use_container_width=True, type="primary"):
+            st.session_state.banca_ini  = ni
+            st.session_state.banca_meta = nm
+            st.rerun()
+
+    banca_ini  = st.session_state.banca_ini
+    banca_meta = st.session_state.banca_meta
+    banca      = calc_fn(history, banca_ini)
+    wins       = [b for b in history if b.get("result")=="WIN"]
+    losses     = [b for b in history if b.get("result")=="LOSS"]
+    lucro      = banca - banca_ini
+    roi        = (lucro/banca_ini*100) if banca_ini>0 else 0
+
+    m1,m2,m3,m4,m5 = st.columns(5)
+    m1.metric("💰 Banca",    f"R${banca:.2f}")
+    m2.metric("📈 Lucro",   f"R${lucro:+.2f}", delta=f"{roi:+.1f}%")
+    m3.metric("✅ Vitórias", len(wins))
+    m4.metric("❌ Derrotas", len(losses))
+    m5.metric("🎯 WR",       f"{len(wins)/max(len(history),1)*100:.0f}%")
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    if history:
+        df = pd.DataFrame(history)
+        for c in ["date","match","market","odds","stake","result","profit"]:
+            if c not in df.columns: df[c] = ""
+        st.dataframe(
+            df[["date","match","market","odds","stake","result","profit"]].rename(columns={
+                "date":"Data","match":"Partida","market":"Mercado",
+                "odds":"Odd","stake":"Valor","result":"Resultado","profit":"Lucro"}),
+            use_container_width=True,
+            height=min(380, 40+35*len(df)))
+        if st.button("🗑️ Limpar Histórico", key="btn_del"):
+            save_fn([]); st.success("Limpo!"); st.rerun()
+    else:
+        st.markdown(
+            '<div style="background:#090C14;border:1px dashed #1A2D4A;border-radius:8px;'
+            'padding:24px;text-align:center;">'
+            '<span style="color:#1E2D45;">Nenhuma aposta registrada.</span></div>',
+            unsafe_allow_html=True)
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+    with st.form("form_bet", clear_on_submit=True):
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            bm  = st.text_input("Partida", key="fb_m", placeholder="ex: T1 vs NS")
+            bmk = st.text_input("Mercado", key="fb_mk", placeholder="ex: Duração >30min")
+        with r2:
+            bo  = st.number_input("Odd", min_value=1.01, value=1.80, step=0.01, key="fb_o")
+            bs  = st.number_input("Valor (R$)", min_value=0.01,
+                                   value=round(banca*0.02,2), step=1., key="fb_s")
+        with r3:
+            br  = st.selectbox("Resultado", ["WIN","LOSS","VOID"], key="fb_r")
+            st.markdown("<br>", unsafe_allow_html=True)
+            sub = st.form_submit_button("💾 Salvar", use_container_width=True, type="primary")
+        if sub:
+            if not bm or not bmk:
+                st.error("Preencha Partida e Mercado.")
+            else:
+                pf = bs*(bo-1) if br=="WIN" else (-bs if br=="LOSS" else 0.)
+                history.append({
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "match":bm,"market":bmk,"odds":bo,
+                    "stake":bs,"result":br,"profit":round(pf,2)})
+                save_fn(history)
+                st.success(f"✅ Salvo! Banca: R${calc_fn(history,banca_ini):.2f}")
+                st.rerun()
+
+# ─── Wiki-Pro ─────────────────────────────────────────────────────────
+def render_wiki_tab():
+    from modules.stats_engine import search_player_wiki
+    st.markdown(
+        '<h3 style="color:#C8D4E8;font-family:Inter,sans-serif;margin-bottom:4px;">'
+        '🔍 Wiki-Pro</h3>', unsafe_allow_html=True)
+    q = st.text_input("", placeholder="ID do jogador (ex: Faker, Zeus, Tinowns)...",
+                       key="wiki_q", label_visibility="collapsed")
+    st.caption("💡 Use letras ocidentais: 'Ruler', não '룰러'.")
+    if not q or len(q) < 2: return
+    qc = "".join(c for c in q if ord(c)<256).strip()
+    if not qc: st.warning("Use caracteres latinos."); return
+    with st.spinner(f"Buscando '{qc}'..."):
+        data = search_player_wiki(qc)
+    if "error" in data:
+        st.markdown(
+            f'<div style="background:#1a0a0a;border:1px solid #EF444444;border-radius:8px;'
+            f'padding:14px 16px;">'
+            f'<span style="color:#EF4444;font-weight:700;">Jogador não encontrado no banco local.</span><br>'
+            f'<span style="color:#7A8FAA;font-size:12px;">'
+            f'Tente: faker, zeus, chovy, ruler, caps, showmaker, tinowns, gumayusi, keria, peyz, route'
+            f'</span></div>',
+            unsafe_allow_html=True)
+        return
+    c1, c2, c3 = st.columns([3,1,1])
+    with c1:
+        st.markdown(
+            f'<div style="background:#090C14;border:1px solid #1A2D4A;'
+            f'border-radius:8px;padding:14px;">'
+            f'<div style="font-size:18px;font-weight:700;color:#1565C0;margin-bottom:8px;">'
+            f'{data["name"]}</div>'
+            f'<div style="font-size:13px;color:#7A8FAA;line-height:1.9;">'
+            f'Time: <b style="color:#C8D4E8;">{data.get("team","—")}</b><br>'
+            f'Role: <b style="color:#C8D4E8;">{data.get("role","—")}</b><br>'
+            f'País: <b style="color:#C8D4E8;">{data.get("nationality","—")}</b>'
+            f'</div></div>', unsafe_allow_html=True)
+    with c2:
+        t = data.get("titles",[])
+        st.markdown(
+            f'<div style="background:#1565C022;border:1px solid #1565C044;'
+            f'border-radius:8px;padding:12px;text-align:center;">'
+            f'<div style="font-size:28px;font-weight:700;color:#1565C0;">{len(t)}</div>'
+            f'<div style="font-size:10px;color:#3A4D65;letter-spacing:1px;">TÍTULOS</div>'
+            f'</div>', unsafe_allow_html=True)
+    with c3:
+        wu = f"https://liquipedia.net/leagueoflegends/{qc.replace(' ','_')}"
+        st.markdown(
+            f'<a href="{wu}" target="_blank" style="text-decoration:none;">'
+            f'<div style="background:#131926;border:1px solid #1A2D4A;border-radius:8px;'
+            f'padding:12px;text-align:center;">'
+            f'<span style="font-size:13px;font-weight:700;color:#1A9FFF;">📖 Liquipedia</span>'
+            f'</div></a>', unsafe_allow_html=True)
+
+# ─── Stubs de compatibilidade ─────────────────────────────────────────
+def render_goal_bar(*a, **kw): pass
+def render_match_row_fast(*a, **kw): pass
+def render_event_grid(*a, **kw): pass
+def render_bankroll_panel(*a, **kw): pass
+def render_wiki_panel(): render_wiki_tab()
+def render_live_section(*a, **kw): pass
+def render_schedule_section(*a, **kw): pass
