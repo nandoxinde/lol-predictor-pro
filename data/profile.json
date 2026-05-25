@@ -1,0 +1,9 @@
+{
+  "username": "Fernando",
+  "display_name": "Fernando",
+  "password_hash": "2409754620a8eec1285c3cac7ce6f1fd7a9b92cc361738abe14dceb7c42a8981",
+  "banca_ini": 0.0,
+  "banca_meta": 1000.0,
+  "banca_atual": 0.0,
+  "strategy": "Kelly (Recomendado)"
+}
