@@ -36,36 +36,46 @@ class MatchAnalyzer:
             if form.get("alert"):
                 alerts.append(form["alert"])
 
-        wr_gap = abs(t1_stats["winrate"] - t2_stats["winrate"])
-
-        if active_markets.get("Vencedor ML") or active_markets.get("Vitória (ML)"):
-            if wr_gap > 0.12:
-                predictions.append(self._predict_winner(match["team1"], t1_stats, match["team2"], t2_stats))
-
-        if active_markets.get("Handicap Kills"):
-            if wr_gap > 0.15:
-                predictions.append(self._predict_kill_handicap(match["team1"], t1_stats, match["team2"], t2_stats))
+        if active_markets.get("Vitória (ML)"):
+            pred = self._predict_winner(match["team1"], t1_stats, match["team2"], t2_stats)
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
         if active_markets.get("First Blood"):
-            predictions.append(self._predict_first_event("First Blood",
+            pred = self._predict_first_event("First Blood",
                 match["team1"], t1_stats["first_blood_rate"],
-                match["team2"], t2_stats["first_blood_rate"]))
+                match["team2"], t2_stats["first_blood_rate"])
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
         if active_markets.get("First Dragon"):
-            predictions.append(self._predict_first_event("First Dragon",
+            pred = self._predict_first_event("First Dragon",
                 match["team1"], t1_stats["first_dragon_rate"],
-                match["team2"], t2_stats["first_dragon_rate"]))
+                match["team2"], t2_stats["first_dragon_rate"])
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
-        if active_markets.get("Duração >27 minutos") or active_markets.get("Duração do Mapa"):
-            predictions.append(self._predict_duration_line(t1_stats, t2_stats, 27))
+        if active_markets.get("First Baron"):
+            pred = self._predict_first_event("First Baron",
+                match["team1"], t1_stats["first_baron_rate"],
+                match["team2"], t2_stats["first_baron_rate"])
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
-        if active_markets.get("Duração >30 minutos"):
-            predictions.append(self._predict_duration_line(t1_stats, t2_stats, 30))
+        if active_markets.get("Total de Kills (O/U)"):
+            pred = self._predict_total_kills(t1_stats, t2_stats)
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
-        if active_markets.get("Over Torres") or active_markets.get("Over/Under Torres Destruídas"):
-            predictions.append(self._predict_towers(t1_stats, t2_stats))
+        if active_markets.get("Duração do Mapa"):
+            pred = self._predict_game_duration(t1_stats, t2_stats)
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
-        predictions.sort(key=lambda p: p["confidence"], reverse=True)
+        if active_markets.get("Gold Diff @15min"):
+            pred = self._predict_gold_diff(match["team1"], t1_stats, match["team2"], t2_stats)
+            if pred["confidence"] >= min_confidence:
+                predictions.append(pred)
 
         # Gera comentário do analista
         analyst_comment = generate_analyst_comment(
@@ -109,22 +119,7 @@ class MatchAnalyzer:
         )
         return {"market": "Vitória (Moneyline)", "suggestion": f"🏆 {favored} Vence",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
-                "reason": reason, "icon": "🏆", "category": "segura"}
-
-    def _predict_kill_handicap(self, t1_name, t1, t2_name, t2):
-        wr_fav = t1_name if t1["winrate"] >= t2["winrate"] else t2_name
-        kill_gap = abs(t1["avg_kills"] - t2["avg_kills"])
-        line = max(1.5, round(kill_gap * 0.6, 1))
-        wr_gap = abs(t1["winrate"] - t2["winrate"])
-        prob = min(0.88, 0.55 + wr_gap * 1.2 + min(kill_gap, 8) * 0.01)
-        confidence = prob * 100
-        reason = (
-            f"{wr_fav} tem vantagem combinada de winrate e kills. "
-            f"Gap de kills estimado: {kill_gap:.1f} por jogo."
-        )
-        return {"market": f"Handicap Kills {wr_fav} -{line}", "suggestion": f"⚡ {wr_fav} -{line} kills",
-                "confidence": round(confidence, 1), "probability": round(prob, 3),
-                "reason": reason, "icon": "⚡", "category": "risco"}
+                "reason": reason, "icon": "🏆"}
 
     def _predict_first_event(self, event_name, t1_name, t1_rate, t2_name, t2_rate):
         total = t1_rate + t2_rate
@@ -139,33 +134,7 @@ class MatchAnalyzer:
         )
         return {"market": event_name, "suggestion": f"{icons.get(event_name,'📌')} {event_name} → {favored}",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
-                "reason": reason, "icon": icons.get(event_name, "📌"), "category": "risco"}
-
-    def _predict_duration_line(self, t1, t2, line: int):
-        avg_duration = (t1["avg_game_length"] + t2["avg_game_length"]) / 2
-        prob = min(0.95, max(0.20, 0.50 + (avg_duration - line) * 0.06))
-        confidence = prob * 100
-        reason = (
-            f"Duração média combinada: {avg_duration:.1f}min. "
-            f"Modelo indica over {line}min com {confidence:.0f}%."
-        )
-        risk = "baixo" if line == 27 else "médio"
-        return {"market": f"Duração >{line} minutos", "suggestion": f"⏱️ Duração >{line}min",
-                "confidence": round(confidence, 1), "probability": round(prob, 3),
-                "reason": reason, "icon": "⏱️", "category": "segura", "risk": risk}
-
-    def _predict_towers(self, t1, t2):
-        avg_duration = (t1["avg_game_length"] + t2["avg_game_length"]) / 2
-        line = 8.5 if avg_duration >= 32 else 7.5
-        prob = min(0.80, max(0.53, 0.52 + (avg_duration - 30) * 0.01))
-        confidence = prob * 100
-        reason = (
-            f"Com duração média de {avg_duration:.1f}min, a tendência é volume suficiente "
-            f"para over {line} torres."
-        )
-        return {"market": f"Over {line} Torres Destruídas", "suggestion": f"🏰 Over {line} torres",
-                "confidence": round(confidence, 1), "probability": round(prob, 3),
-                "reason": reason, "icon": "🏰", "category": "risco"}
+                "reason": reason, "icon": icons.get(event_name, "📌")}
 
     def _predict_total_kills(self, t1, t2):
         expected_total = (t1["avg_kills"] + t1["avg_deaths"] + t2["avg_kills"] + t2["avg_deaths"]) / 2

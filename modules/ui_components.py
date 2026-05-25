@@ -6,7 +6,6 @@ Lista estilo BetBoom com logos reais + fallback inicial colorido.
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import numpy as np
 from datetime import datetime, timezone, timedelta
 
 TZ_BRT = timezone(timedelta(hours=-3))
@@ -15,51 +14,32 @@ def _now():
     return datetime.now(tz=TZ_BRT)
 
 # ─── Logo — escudo SVG puro (sem URLs externas que podem quebrar) ─────
-def _logo_html(team_name: str, tier_color: str, size: int = 32,
-               image_url: str = "") -> str:
+def _logo_html(team_name: str, tier_color: str, size: int = 32) -> str:
     """
-    Logo do time:
-    1. Se PandaScore enviou image_url → usa com fallback CSS
-    2. Sem URL → escudo CSS com cor real do time (nunca quebra)
+    Escudo circular com gradiente neon + inicial do time.
+    Sem dependência de URL externa — nunca quebra.
     """
-    from modules.data_fetcher import get_team_color
-    # Usa a cor real do time, não a cor genérica do tier
-    color = get_team_color(team_name) or tier_color
-    init  = team_name[:2].upper()
-    sz    = str(size)
-    fs    = str(max(10, int(size * 0.40)))
-
-    # Escudo CSS puro — garantido
-    shield = (
+    init = team_name[:2].upper()
+    sz   = str(size)
+    fs   = str(max(10, int(size * 0.40)))
+    # Gradiente baseado na cor do tier
+    c1   = tier_color
+    # Escurece o gradiente
+    c2   = "#090C14"
+    return (
         f'<div style="width:{sz}px;height:{sz}px;border-radius:50%;'
-        f'flex-shrink:0;'
-        f'background:linear-gradient(135deg,{color}66 0%,#0a0e1a 100%);'
-        f'border:2px solid {color}99;'
+        f'flex-shrink:0;overflow:hidden;'
+        f'background:linear-gradient(135deg,{c1}55 0%,{c2} 100%);'
+        f'border:1.5px solid {c1}88;'
         f'display:flex;align-items:center;justify-content:center;'
-        f'font-size:{fs}px;font-weight:900;color:{color};'
+        f'font-size:{fs}px;font-weight:900;color:{c1};'
         f'font-family:Inter,sans-serif;'
-        f'box-shadow:0 0 8px {color}44;">'
+        f'text-shadow:0 0 8px {c1}99;'
+        f'box-shadow:0 0 10px {c1}33 inset;">'
         f'{init}</div>'
     )
 
-    if not image_url:
-        return shield
-
-    # Tem URL da PandaScore — tenta com fallback para escudo
-    oe = "this.style.display='none';this.nextElementSibling.style.display='flex';"
-    return (
-        f'<div style="position:relative;width:{sz}px;height:{sz}px;flex-shrink:0;">'
-        f'<img src="{image_url}" '
-        f'style="width:{sz}px;height:{sz}px;border-radius:50%;'
-        f'object-fit:contain;background:transparent;display:block;" '
-        f'onerror="{oe}" loading="lazy" />'
-        f'<div style="display:none;width:{sz}px;height:{sz}px;border-radius:50%;'
-        f'background:linear-gradient(135deg,{color}66,#0a0e1a);'
-        f'border:2px solid {color}99;'
-        f'align-items:center;justify-content:center;'
-        f'font-size:{fs}px;font-weight:900;color:{color};">'
-        f'{init}</div></div>'
-    )
+# ─── Tempo helpers ────────────────────────────────────────────────────
 def _fmt_time(match: dict) -> tuple:
     """Retorna (label, cor, is_live)."""
     if match.get("state") == "inProgress":
@@ -72,7 +52,7 @@ def _fmt_time(match: dict) -> tuple:
         dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
         diff = (dt - _now()).total_seconds()
         if diff <= 0:
-            return "Agora", "#F59E0B", False
+            return "🔴 AO VIVO", "#EF4444", True
         h = int(diff // 3600); m = int((diff % 3600) // 60)
         if diff <= 3600:
             return f"⏱ {h}h {m:02d}min" if h else f"⏱ {m}min", "#F59E0B", False
@@ -202,7 +182,7 @@ _STADIUM = "https://wallpapercave.com/wp/wp9306424.jpg"
 
 def render_hero(n_live: int, n_next: int, source: str = ""):
     live_txt = f"🔴 {n_live} ao vivo  ·  " if n_live > 0 else ""
-    demo_txt = "  · ⚠️ Dados demo (PandaScore indisponível)" if source == "demo" else ""
+    demo_txt = "  · ⚠️ Dados demo (Liquipedia bloqueou este servidor)" if source == "demo" else ""
     st.markdown(
         f'<div style="background:linear-gradient(180deg,'
         f'rgba(11,13,17,.25) 0%,rgba(11,13,17,.82) 55%,rgba(11,13,17,1) 100%),'
@@ -212,7 +192,7 @@ def render_hero(n_live: int, n_next: int, source: str = ""):
         f'<div style="font-size:22px;font-weight:900;color:#fff;'
         f'text-shadow:0 2px 10px rgba(0,0,0,.9);">League of Legends</div>'
         f'<div style="font-size:11px;color:#4A6080;margin-top:4px;">'
-        f'{live_txt}📅 {n_next} próximos · PandaScore API · cache 60s{demo_txt}</div>'
+        f'{live_txt}📅 {n_next} próximos · Cargo API · cache 5min{demo_txt}</div>'
         f'</div>', unsafe_allow_html=True)
 
 # ─── Filtros de tempo ─────────────────────────────────────────────────
@@ -302,8 +282,8 @@ def render_match_list(matches: list, analysis_map: dict,
             )
 
             # Logos
-            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32, m.get("team1_image",""))
-            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32, m.get("team2_image",""))
+            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32)
+            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32)
 
             # Palpite principal (confiança)
             dc = an.get("_dc")  # pré-calculado se disponível
@@ -338,7 +318,7 @@ def render_match_list(matches: list, analysis_map: dict,
                 f'<div style="text-align:center;flex:2;min-width:90px;">'
                 f'{live_dot}'
                 f'<div style="font-size:13px;font-weight:800;color:{time_color};">{time_label}</div>'
-                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">Bo{bo}</div>'
+                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">BoBo{bo}</div>'
                 f'{pick_html}'
                 f'</div>'
 
@@ -370,30 +350,13 @@ def render_match_list(matches: list, analysis_map: dict,
             )
             st.markdown(row, unsafe_allow_html=True)
 
-            # Botões: Ver análise + Encerrado (só para jogos ao vivo)
-            if is_live:
-                col_view, col_hide = st.columns([4, 1])
-                with col_view:
-                    if st.button(f"🔍  {t1} vs {t2}", key=f"row_{mid}",
-                                 use_container_width=True,
-                                 type="primary" if is_sel else "secondary"):
-                        st.session_state.selected_match = m
-                        st.rerun()
-                with col_hide:
-                    if st.button("✕", key=f"hide_{mid}",
-                                 use_container_width=True,
-                                 type="secondary",
-                                 help="Marcar como encerrado — remove da lista"):
-                        if "hidden_matches" not in st.session_state:
-                            st.session_state.hidden_matches = set()
-                        st.session_state.hidden_matches.add(f"{t1}|{t2}")
-                        st.rerun()
-            else:
-                if st.button(f"🔍  {t1} vs {t2}", key=f"row_{mid}",
-                             use_container_width=True,
-                             type="primary" if is_sel else "secondary"):
-                    st.session_state.selected_match = m
-                    st.rerun()
+            # Botão clicável
+            btn_label = f"🔍  {t1} vs {t2}"
+            if st.button(btn_label, key=f"row_{mid}",
+                         use_container_width=True,
+                         type="primary" if is_sel else "secondary"):
+                st.session_state.selected_match = m
+                st.rerun()
 
 # ─── Sala de Operação ─────────────────────────────────────────────────
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
@@ -443,16 +406,18 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
 
     st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
 
-    with st.expander("📊 Comparativo de Stats", expanded=True):
-        _render_stats(t1, analysis["team1_stats"], t2, analysis["team2_stats"])
-
-    with st.expander("🧠 Análise do Sistema", expanded=True):
-        cmt = analysis.get("analyst_comment","")
-        if cmt:
-            st.markdown(
-                f'<p style="font-size:13px;color:#7A8FAA;line-height:1.6;margin:0;">{cmt}</p>',
-                unsafe_allow_html=True)
-
+    # Stats + Rosters
+    cs, cr = st.columns(2)
+    with cs:
+        with st.expander("📊 Comparativo de Stats", expanded=True):
+            _render_stats(t1, analysis["team1_stats"], t2, analysis["team2_stats"])
+    with cr:
+        with st.expander("🧠 Análise do Sistema", expanded=False):
+            cmt = analysis.get("analyst_comment","")
+            if cmt:
+                st.markdown(
+                    f'<p style="font-size:13px;color:#7A8FAA;line-height:1.6;margin:0;">{cmt}</p>',
+                    unsafe_allow_html=True)
     with st.expander(f"👥 Rosters — {t1} vs {t2}", expanded=False):
         r1, r2 = st.tabs([f"👥 {t1}", f"👥 {t2}"])
         with r1: _render_roster(roster_t1)
@@ -478,13 +443,12 @@ def _resolve_channel(code_or_name: str) -> str:
           .split("?")[0].split("/")[0].strip())
     return ch or "baiano"
 
-def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=400):
+def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
     ch = st.session_state.get("twitch_custom","") or _resolve_channel(channel_or_code)
-    ch = _resolve_channel(ch)
+    ch = _resolve_channel(ch)  # normaliza caso seja URL
 
     label = f"🟣 twitch.tv/{ch}"
-    if t1 and t2:
-        label += f"  ·  {t1} vs {t2}"
+    if t1 and t2: label += f"  ·  {t1} vs {t2}"
 
     st.markdown(
         f'<div style="background:#090C14;border:1px solid #1A2D4A;'
@@ -494,36 +458,27 @@ def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=400):
         f'<span style="font-size:10px;color:#3A4D65;">{lg}</span></div>',
         unsafe_allow_html=True)
 
-    # Player Twitch via iframe direto (mais estável que o SDK ao rolar a página)
-    # O iframe não reinicia ao fazer scroll porque é renderizado como HTML puro
-    player_html = (
-        '<!DOCTYPE html><html><head>'
-        '<style>'
-        '* { margin: 0; padding: 0; box-sizing: border-box; }'
-        'html, body { background: #000; width: 100%; height: 100%; overflow: hidden; }'
-        'iframe { width: 100%; height: ' + str(height) + 'px; border: none; display: block; }'
-        '</style></head><body>'
-        '<iframe'
-        ' src="https://player.twitch.tv/?channel=' + ch + '&parent=localhost&parent=127.0.0.1&autoplay=false&muted=true"'
-        ' allowfullscreen="true"'
-        ' scrolling="no"'
-        '></iframe>'
-        '</body></html>'
-    )
+    # Twitch Embed SDK — sem erro de parent
+    components.html(
+        f'<!DOCTYPE html><html><head>'
+        f'<script src="https://embed.twitch.tv/embed/v1.js"></script>'
+        f'<style>*{{margin:0;padding:0;}}body{{background:#000;overflow:hidden;}}'
+        f'#e{{width:100%;height:{height}px;}}</style></head>'
+        f'<body><div id="e"></div><script>'
+        f'new Twitch.Embed("e",{{width:"100%",height:{height},channel:"{ch}",'
+        f'layout:"video",autoplay:false,muted:true,theme:"dark"}});'
+        f'</script></body></html>',
+        height=height+4, scrolling=False)
 
-    components.html(player_html, height=height + 4, scrolling=False)
-
-    # Campo para trocar canal
     st.markdown(
         '<div style="background:#090C14;border:1px solid #1A2D4A;border-top:none;'
         'border-radius:0 0 8px 8px;padding:5px 12px;">', unsafe_allow_html=True)
     new_ch = st.text_input(
         "", value=ch, key=f"tw_{ch[:8]}",
-        placeholder="Canal Twitch (ex: lcs, lck, cblol, baiano)",
+        placeholder="Canal Twitch (ex: baiano, lck, cblol)",
         label_visibility="collapsed")
     if new_ch.strip() and new_ch.strip() != ch:
-        st.session_state.twitch_custom = new_ch.strip()
-        st.rerun()
+        st.session_state.twitch_custom = new_ch.strip(); st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
@@ -591,7 +546,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
                 '<div style="font-size:10px;font-weight:700;color:#22C55E;'
                 'letter-spacing:1px;margin-bottom:5px;text-transform:uppercase;">'
                 '✅ APOSTAS SEGURAS</div>', unsafe_allow_html=True)
-            for d in safe:
+            for d in safe[:3]:
                 cc2 = "#22C55E" if d["confidence"]>=80 else "#F59E0B"
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
@@ -607,7 +562,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
                 '<div style="font-size:10px;font-weight:700;color:#F59E0B;'
                 'letter-spacing:1px;margin-bottom:5px;text-transform:uppercase;">'
                 '⚡ APOSTAS DE RISCO</div>', unsafe_allow_html=True)
-            for d in risky:
+            for d in risky[:3]:
                 cc2 = "#F59E0B" if d["confidence"]>=65 else "#EF4444"
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
@@ -754,7 +709,7 @@ def render_bankroll_tab(history, save_fn, calc_fn):
 
     ci1, ci2, ci3 = st.columns(3)
     with ci1:
-        ni = st.number_input("💵 Banca Inicial (R$)", min_value=0.,
+        ni = st.number_input("💵 Banca Inicial (R$)", min_value=1.,
                               value=float(st.session_state.banca_ini), step=10., key="cfg_ini")
     with ci2:
         nm = st.number_input("🎯 Meta (R$)", min_value=ni+1.,
@@ -763,15 +718,13 @@ def render_bankroll_tab(history, save_fn, calc_fn):
     with ci3:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("✅ Aplicar", key="btn_cfg", use_container_width=True, type="primary"):
-            from modules.auth import sync_banca_to_profile
             st.session_state.banca_ini  = ni
             st.session_state.banca_meta = nm
-            sync_banca_to_profile(ni, nm, float(st.session_state.get("banca_atual_sync", 0.0)))
             st.rerun()
 
     banca_ini  = st.session_state.banca_ini
     banca_meta = st.session_state.banca_meta
-    banca      = float(st.session_state.get("banca_atual_sync", 0.0))
+    banca      = calc_fn(history, banca_ini)
     wins       = [b for b in history if b.get("result")=="WIN"]
     losses     = [b for b in history if b.get("result")=="LOSS"]
     lucro      = banca - banca_ini
@@ -814,8 +767,7 @@ def render_bankroll_tab(history, save_fn, calc_fn):
         with r2:
             bo  = st.number_input("Odd", min_value=1.01, value=1.80, step=0.01, key="fb_o")
             bs  = st.number_input("Valor (R$)", min_value=0.01,
-                                   value=max(0.01, round(max(banca, 1.0)*0.02,2)),
-                                   step=1., key="fb_s")
+                                   value=round(banca*0.02,2), step=1., key="fb_s")
         with r3:
             br  = st.selectbox("Resultado", ["WIN","LOSS","VOID"], key="fb_r")
             st.markdown("<br>", unsafe_allow_html=True)
@@ -830,56 +782,8 @@ def render_bankroll_tab(history, save_fn, calc_fn):
                     "match":bm,"market":bmk,"odds":bo,
                     "stake":bs,"result":br,"profit":round(pf,2)})
                 save_fn(history)
-                st.success(f"✅ Salvo! Resultado histórico: R${calc_fn(history,banca_ini):.2f}")
+                st.success(f"✅ Salvo! Banca: R${calc_fn(history,banca_ini):.2f}")
                 st.rerun()
-
-    with st.expander("📐 Calculadora Kelly", expanded=False):
-        from modules.bankroll import BankrollManager
-        prob = st.slider("Probabilidade estimada (%)", min_value=1, max_value=99, value=58, step=1) / 100
-        odd = st.number_input("Odd da BetBoom", min_value=1.01, value=1.80, step=0.01, key="kelly_odd")
-        bm = BankrollManager(banca, banca_meta, "Kelly (Recomendado)")
-        stake_info = bm.calculate_stake(prob, odd)
-        ev = (prob * odd - 1) * 100
-
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Stake recomendado", f"R${stake_info['stake']:.2f}")
-        k2.metric("% da banca", f"{stake_info['stake_pct']:.1f}%")
-        k3.metric("EV", f"{ev:+.1f}%")
-
-        try:
-            import plotly.graph_objects as go
-            rng = np.random.RandomState(42)
-            n_paths, n_bets = 200, 50
-            stake_frac = stake_info["stake_pct"] / 100
-            paths = np.zeros((n_paths, n_bets + 1))
-            paths[:, 0] = banca
-            for i in range(n_paths):
-                current = banca
-                for j in range(1, n_bets + 1):
-                    wager = current * stake_frac
-                    if wager <= 0:
-                        paths[i, j] = current
-                        continue
-                    current += wager * (odd - 1) if rng.rand() < prob else -wager
-                    paths[i, j] = max(0, current)
-
-            fig = go.Figure()
-            x = list(range(n_bets + 1))
-            for i in range(n_paths):
-                fig.add_trace(go.Scatter(
-                    x=x, y=paths[i], mode="lines", line={"color":"rgba(21,101,192,0.10)", "width":1},
-                    hoverinfo="skip", showlegend=False))
-            fig.add_trace(go.Scatter(
-                x=x, y=np.median(paths, axis=0), mode="lines",
-                line={"color":"#22C55E", "width":3}, name="Mediana"))
-            fig.update_layout(
-                template="plotly_dark", paper_bgcolor="#0F1520", plot_bgcolor="#090C14",
-                height=320, margin={"l":20, "r":20, "t":20, "b":20},
-                xaxis_title="Apostas", yaxis_title="Banca (R$)",
-                font={"color":"#C8D4E8", "family":"Inter"})
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception:
-            st.info("Instale Plotly para visualizar a simulação Kelly.")
 
 # ─── Wiki-Pro ─────────────────────────────────────────────────────────
 def render_wiki_tab():
@@ -895,11 +799,11 @@ def render_wiki_tab():
     if not qc: st.warning("Use caracteres latinos."); return
     with st.spinner(f"Buscando '{qc}'..."):
         data = search_player_wiki(qc)
-    if "error" in data or data.get("not_found"):
+    if "error" in data:
         st.markdown(
-            f'<div style="background:#0F1520;border:1px solid #1565C044;border-radius:8px;'
+            f'<div style="background:#1a0a0a;border:1px solid #EF444444;border-radius:8px;'
             f'padding:14px 16px;">'
-            f'<span style="color:#1565C0;font-weight:700;">Jogador não encontrado no banco local.</span><br>'
+            f'<span style="color:#EF4444;font-weight:700;">Jogador não encontrado no banco local.</span><br>'
             f'<span style="color:#7A8FAA;font-size:12px;">'
             f'Tente: faker, zeus, chovy, ruler, caps, showmaker, tinowns, gumayusi, keria, peyz, route'
             f'</span></div>',

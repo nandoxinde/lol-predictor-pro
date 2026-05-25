@@ -42,9 +42,9 @@ if not check_auth():
 # ══════════════════════════════════════════════════════════════════════
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
-    st.session_state.banca_ini        = float(profile.get("banca_ini",   0.0))
+    st.session_state.banca_ini        = float(profile.get("banca_ini",   100.0))
     st.session_state.banca_meta       = float(profile.get("banca_meta", 1000.0))
-    st.session_state.banca_atual_sync = float(profile.get("banca_atual",   0.0))
+    st.session_state.banca_atual_sync = float(profile.get("banca_atual", 100.0))
     st.session_state.state_initialized = True
 
 for k, v in [
@@ -55,7 +55,6 @@ for k, v in [
     ("is_searching",    False),
     ("time_filter",     "all"),
     ("twitch_custom",   ""),
-    ("hidden_matches",  set()),   # jogos marcados como encerrados
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -89,7 +88,7 @@ def _cb(h, ini):
 
 # ── Cache ─────────────────────────────────────────────────────────────
 def _ts5():
-    """Chave que muda a cada 5 minutos para consultas auxiliares em cache."""
+    """Chave que muda a cada 5 minutos — para Cargo API real (evita 429)."""
     t = now_brt()
     return t.strftime("%Y%m%d%H") + str(t.minute // 5)
 
@@ -101,7 +100,7 @@ def _ts1():
 def _cargo(ts, q):
     """
     Cache de 60s com chave por minuto.
-    - API real: 60s evita requisições excessivas à PandaScore
+    - API real: 60s é suficiente (Liquipedia atualiza a cada ~5min de qualquer forma)
     - Dados demo: horários recalculados a cada minuto — nunca ficam no passado
     """
     return DataFetcher().cargo_search(q)
@@ -116,9 +115,11 @@ def _stats(ts, t): return DataFetcher().fetch_team_stats_cargo(t)
 history     = _lh()
 banca_ini   = st.session_state.banca_ini
 banca_meta  = st.session_state.banca_meta
-# Banca atual = apenas o valor sincronizado manualmente (salvo em profile.json).
-banca_sync  = st.session_state.get("banca_atual_sync", 0.0)
-banca_atual = banca_sync
+# Banca atual = sincronizada manualmente OU calculada pelo histórico
+banca_sync  = st.session_state.banca_atual_sync
+banca_hist  = _cb(history, banca_ini)
+# Usa o maior dos dois (a que foi explicitamente sincronizada ou calculada)
+banca_atual = banca_sync if abs(banca_sync - banca_ini) > abs(banca_hist - banca_ini) else banca_hist
 
 profile = st.session_state.get("profile") or _load_profile()
 display_name = profile.get("display_name", "Fernando")
@@ -164,13 +165,13 @@ if st.session_state.aba == "banca":
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("✅ Sincronizar", key="btn_sync",
                      use_container_width=True, type="primary"):
-            st.session_state.banca_atual_sync = novo_saldo
-            sync_banca_to_profile(banca_ini, banca_meta, novo_saldo)
             if novo_saldo <= 0:
-                st.info("Insira seu saldo da BetBoom para calcular stakes.")
+                st.warning("⚠️ Banca zerada. Deposite na BetBoom antes de operar.")
             else:
+                st.session_state.banca_atual_sync = novo_saldo
+                sync_banca_to_profile(banca_ini, banca_meta, novo_saldo)
                 st.success(f"✅ Banca sincronizada: R${novo_saldo:.2f}")
-            st.rerun()
+                st.rerun()
     with col_meta:
         novo_meta = st.number_input(
             "🎯 Meta de lucro (R$):",
@@ -182,7 +183,9 @@ if st.session_state.aba == "banca":
             st.rerun()
 
     if banca_atual <= 0:
-        st.info("Insira seu saldo da BetBoom para calcular stakes.")
+        st.error(
+            "🚨 **BANCA ZERADA** — Não é possível calcular stakes. "
+            "Sincronize seu saldo acima antes de operar.")
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -205,8 +208,8 @@ bmgr     = BankrollManager(banca_atual, banca_meta, "Kelly (Recomendado)")
 
 # Aviso de banca zerada
 if banca_atual <= 0:
-    st.info(
-        "Banca zerada ou não sincronizada. "
+    st.warning(
+        "⚠️ Banca zerada ou não sincronizada. "
         "Acesse **💰 Gestão de Banca** e insira seu saldo atual.")
 
 # ── Sala de Operação ──────────────────────────────────────────────────
@@ -215,8 +218,8 @@ if st.session_state.selected_match:
     lc  = m.get("league_code", "_unknown")
     cap = LEAGUE_CONFIDENCE_CAP.get(m.get("league_tier", 1), 1.0)
     mkt = {k: True for k in [
-        "Vencedor ML", "Handicap Kills", "First Blood", "First Dragon",
-        "Duração >27 minutos", "Duração >30 minutos", "Over Torres"]}
+        "Vitória (ML)", "First Blood", "First Dragon", "First Baron",
+        "Total de Kills (O/U)", "Duração do Mapa", "Gold Diff @15min"]}
     an  = MatchAnalyzer().analyze_match(m, mkt, min(70, cap * 100))
     r1  = get_roster(m["team1"], lc)
     r2  = get_roster(m["team2"], lc)
@@ -228,7 +231,7 @@ if st.session_state.selected_match:
     render_operation_room(m, an, bmgr, None, r1, r2, banca_atual, banca_meta, twch)
     st.stop()
 
-# ── Carrega agenda PandaScore ─────────────────────────────────────────
+# ── Carrega agenda Cargo API ──────────────────────────────────────────
 if not st.session_state.cargo_matches:
     with st.spinner("⚡ Carregando agenda global..."):
         ms, src = _cargo(_ts1(), "")
@@ -249,8 +252,8 @@ for m in st.session_state.cargo_matches:
 
 # Análises em paralelo
 mkt = {k: True for k in [
-    "Vencedor ML", "Handicap Kills", "First Blood", "First Dragon",
-    "Duração >27 minutos", "Duração >30 minutos", "Over Torres"]}
+    "Vitória (ML)", "First Blood", "First Dragon", "First Baron",
+    "Total de Kills (O/U)", "Duração do Mapa", "Gold Diff @15min"]}
 
 def _an(m):
     try:
@@ -265,15 +268,10 @@ if all_ms:
     with ThreadPoolExecutor(max_workers=6) as pool:
         analysis_map = dict(pool.map(_an, all_ms))
 
-n_live = sum(1 for m in all_ms if m.get("state") == "inProgress")
+n_live = sum(1 for m in all_ms if m.get("state") == "inProgress" or m.get("_riot_live"))
 n_next = len(all_ms) - n_live
 
-# Determina fonte real dos dados
-_src_display = "demo" if st.session_state.cargo_source == "demo" else "real"
-# Se tem jogos reais da PandaScore (não são demo), mostra como real
-if any(not m.get("is_demo", True) for m in all_ms):
-    _src_display = "real"
-render_hero(n_live, n_next, _src_display)
+render_hero(n_live, n_next, st.session_state.cargo_source)
 
 # ── Barra de ferramentas ──────────────────────────────────────────────
 c_q, c_s, _, c_t1, c_t2, c_go, c_ref = st.columns([3, 1, .15, 1.5, 1.5, 1.3, 0.6])
@@ -342,35 +340,6 @@ for i, (key, label) in enumerate(filter_labels):
             st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Filtro por liga ──────────────────────────────────────────────
-LIGAS = [
-    ("todas", "🌎 Todas"),
-    ("lck",   "🇰🇷 LCK"),
-    ("lpl",   "🇨🇳 LPL"),
-    ("lec",   "🇪🇺 LEC"),
-    ("lcs",   "🇺🇸 LCS"),
-    ("cblol", "🇧🇷 CBLOL"),
-    ("lck_cl","🇰🇷 LCK CL"),
-    ("cblol_acad","🇧🇷 CBLOL Acad"),
-    ("lla",   "🌎 LLA"),
-    ("vcs",   "🇻🇳 VCS"),
-    ("tcl",   "🇹🇷 TCL"),
-    ("ewc",   "🏆 EWC"),
-]
-if "league_filter" not in st.session_state:
-    st.session_state.league_filter = "todas"
-
-st.markdown("<div style='margin:4px 0 8px;'>", unsafe_allow_html=True)
-lg_cols = st.columns(len(LIGAS))
-for i, (lk, ll) in enumerate(LIGAS):
-    with lg_cols[i]:
-        active_lg = (st.session_state.league_filter == lk)
-        if st.button(ll, key="lg_" + lk, use_container_width=True,
-                     type="primary" if active_lg else "secondary"):
-            st.session_state.league_filter = lk
-            st.rerun()
-st.markdown("</div>", unsafe_allow_html=True)
-
 # ── Filtra e renderiza lista ──────────────────────────────────────────
 filtered = filter_matches_by_time(all_ms, st.session_state.time_filter)
 
@@ -384,15 +353,23 @@ if st.session_state.selected_match:
     sm = st.session_state.selected_match
     sel_mid = hashlib.md5((sm["team1"] + sm["team2"]).encode()).hexdigest()[:8]
 
-# Remove jogos encerrados pelo usuário
-hidden = st.session_state.get("hidden_matches", set())
-filtered = [m for m in filtered
-            if f"{m['team1']}|{m['team2']}" not in hidden]
-
-# Aplica filtro de liga
-_lg_filter = st.session_state.get("league_filter", "todas")
-if _lg_filter != "todas":
-    filtered = [m for m in filtered if m.get("league_code") == _lg_filter]
-
 render_match_list(filtered, analysis_map, bmgr, selected_id=sel_mid)
 
+# ── URL específica ────────────────────────────────────────────────────
+with st.expander("🔗 Colar URL da Liquipedia", expanded=False):
+    cu, cub = st.columns([5, 1])
+    with cu:
+        url_inp = st.text_input(
+            "", "", key="url_inp",
+            placeholder="liquipedia.net/leagueoflegends/LCK/2026/...",
+            label_visibility="collapsed")
+    with cub:
+        if st.button("🔍", key="btn_url", use_container_width=True, type="primary"):
+            if url_inp.strip():
+                st.cache_data.clear()
+                st.session_state.cargo_matches = []
+                with st.spinner("Lendo URL..."):
+                    ms, msg = fetcher.scrape_liquipedia_url(url_inp.strip())
+                st.session_state.cargo_matches = ms
+                st.session_state.cargo_source  = "real"
+                st.rerun()

@@ -45,18 +45,6 @@ class BankrollManager:
 
         Usa Kelly Fracionário (25%) para segurança.
         """
-        if self.bankroll <= 0 or odds <= 1:
-            return {
-                "method": "Kelly Fracionário (25%)",
-                "stake": 0.0,
-                "stake_pct": 0.0,
-                "kelly_full_pct": 0.0,
-                "profit_potential": 0.0,
-                "ruin_probability": 0.0,
-                "bets_to_target": None,
-                "ev": round((probability * odds - 1) * 100, 1) if odds > 0 else 0.0,
-            }
-
         b = odds - 1
         p = probability
         q = 1 - p
@@ -131,7 +119,7 @@ class BankrollManager:
         Estima quantidade de apostas necessárias para atingir a meta.
         Usa crescimento esperado por aposta.
         """
-        if kelly_fraction <= 0 or win_prob <= 0 or self.bankroll <= 0:
+        if kelly_fraction <= 0 or win_prob <= 0:
             return 999
 
         # Crescimento esperado por aposta (geométrico)

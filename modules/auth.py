@@ -23,9 +23,9 @@ DEFAULT_PROFILE = {
     "username":      "Fernando",
     "display_name":  "Fernando",
     "password_hash": hashlib.sha256(b"LolPredictor2025!").hexdigest(),
-    "banca_ini":     0.0,
+    "banca_ini":     100.0,
     "banca_meta":    1000.0,
-    "banca_atual":   0.0,
+    "banca_atual":   100.0,
     "strategy":      "Kelly (Recomendado)",
 }
 
@@ -139,9 +139,9 @@ def _render_login():
                     st.session_state.authenticated    = True
                     st.session_state.role             = "guest"
                     st.session_state.profile          = {"display_name": "Convidado"}
-                    st.session_state.banca_ini        = 0.0
+                    st.session_state.banca_ini        = 100.0
                     st.session_state.banca_meta       = 1000.0
-                    st.session_state.banca_atual_sync = 0.0
+                    st.session_state.banca_atual_sync = 100.0
                     st.success("✅ Bem-vindo, Convidado! Acesso somente leitura.")
                     st.rerun()
 

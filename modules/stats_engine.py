@@ -267,7 +267,6 @@ def _player_fallback(player_name: str) -> dict:
         "birth":       "—",
         "titles":      [],
         "source":      "Dados locais (Liquipedia temporariamente indisponível)",
-        "not_found":   True,
     }
 
 
