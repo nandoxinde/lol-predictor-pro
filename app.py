@@ -60,7 +60,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "priority-strip-v6"
+DATA_VERSION = "verified-lpl-v7"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()

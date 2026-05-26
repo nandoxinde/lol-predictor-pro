@@ -132,6 +132,27 @@ def guess_league(team1: str, team2: str = "") -> str:
     return "_unknown"
 
 
+LPL_CHINA_HINTS = {
+    "jd gaming", "jdg", "top esports", "tes", "bilibili gaming", "blg",
+    "edward gaming", "edg", "weibo gaming", "wbg", "lng esports", "lng",
+    "royal never give up", "rng", "invictus gaming", "ig", "ninjas in pyjamas",
+    "nip", "anyones legend", "anyone's legend", "al", "team we", "we",
+    "thundertalk gaming", "tt gaming", "tt", "lgd gaming", "lgd",
+    "oh my god", "omg", "ultra prime", "up", "funplus phoenix", "fpx",
+    "rare atom", "ra", "weibo", "thundertalk",
+}
+
+
+def is_verified_lpl_match(team1: str, team2: str) -> bool:
+    text = f"{team1} {team2}".lower()
+    normalized = " " + re.sub(r"[^a-z0-9]+", " ", text).strip() + " "
+    for hint in LPL_CHINA_HINTS:
+        hint_norm = " " + re.sub(r"[^a-z0-9]+", " ", hint.lower()).strip() + " "
+        if hint_norm in normalized:
+            return True
+    return False
+
+
 STREAM_CHANNELS = {
     "cblol": "cblol",
     "cblol_acad": "cblol",
@@ -376,6 +397,8 @@ class DataFetcher:
             code = league_from_text(tournament)
             if code == "_unknown":
                 code = guess_league(t1, t2)
+            if code == "lpl" and not is_verified_lpl_match(t1, t2):
+                code = "_unknown"
             matches.append(self._mk(
                 t1,
                 t2,
@@ -421,6 +444,8 @@ class DataFetcher:
         code = league_from_text(f"{league.get('name', '')} {serie.get('full_name', '')}")
         if code == "_unknown":
             code = guess_league(t1, t2)
+        if code == "lpl" and not is_verified_lpl_match(t1, t2):
+            code = "_unknown"
         info = get_league_info(code)
         return self._mk(
             t1,
@@ -462,6 +487,8 @@ class DataFetcher:
                 code = league_from_text(event.get("league", {}).get("name", ""))
                 if code == "_unknown":
                     code = guess_league(teams[0].get("name", ""), teams[1].get("name", ""))
+                if code == "lpl" and not is_verified_lpl_match(teams[0].get("name", ""), teams[1].get("name", "")):
+                    code = "_unknown"
                 info = get_league_info(code)
                 parsed.append(self._mk(
                     teams[0].get("name", "Team A"),
@@ -522,6 +549,8 @@ class DataFetcher:
                 code = league_from_text(overview)
                 if code == "_unknown":
                     code = guess_league(t1, t2)
+                if code == "lpl" and not is_verified_lpl_match(t1, t2):
+                    code = "_unknown"
                 matches.append(self._mk(
                     t1,
                     t2,
