@@ -27,6 +27,8 @@ LOLESPORTS_DEFAULT_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 LOLESPORTS_KEY = get_secret("LOLESPORTS_API_KEY") or LOLESPORTS_DEFAULT_KEY
 LEAGUEPEDIA_CACHE_TTL = 15 * 60
 _LEAGUEPEDIA_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
+TEAM_STATS_CARGO_CACHE_TTL = 30 * 60
+_TEAM_STATS_CARGO_CACHE: dict[str, tuple[datetime, dict]] = {}
 SERIES_MEMORY_CACHE_TTL = 60
 _SERIES_MEMORY_CACHE: dict[str, tuple[datetime, dict]] = {}
 
@@ -373,8 +375,8 @@ class DataFetcher:
         seen: set[str] = set()
         query_norm = query.strip().lower()
 
-        # Agenda/live/logos come from LoLEsports only. This avoids false live
-        # states and duplicated games from odds providers.
+        # Agenda/live/logos come from LoLEsports first; Leaguepedia fills gaps
+        # when official APIs are restricted or incomplete.
         for match in self._fetch_lolesports_live():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_lolesports_schedule():
@@ -382,11 +384,14 @@ class DataFetcher:
         for match in self._fetch_pandascore_running():
             if match.get("league_code") == "ewc":
                 self._append_unique(matches, seen, match, query_norm)
+        for match in self._fetch_leaguepedia_schedule(query):
+            self._append_unique(matches, seen, match, query_norm)
 
         self._enrich_logos_from_lolesports(matches)
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
         if matches:
-            return matches, "LoLEsports"
+            sources = {match.get("source", "") for match in matches}
+            return matches, "LoLEsports + Leaguepedia" if "Leaguepedia" in sources else "LoLEsports"
         return self._demo_matches(query), "demo"
 
     def fetch_lolesports_live_stats(self, game_id: str | None) -> dict:
@@ -1232,8 +1237,180 @@ class DataFetcher:
     def get_team_stats(self, team_name: str, league_code: str, last_n: int = 15) -> dict:
         return self._estimate_stats(team_name, league_code)
 
-    def fetch_team_stats_cargo(self, team_name: str) -> dict:
-        return {}
+    def fetch_team_stats_cargo(self, team_name: str, last_n: int = 15) -> dict:
+        cache_key = f"{_team_key(team_name)}|{last_n}"
+        cached = _TEAM_STATS_CARGO_CACHE.get(cache_key)
+        if cached and (datetime.now(timezone.utc) - cached[0]).total_seconds() < TEAM_STATS_CARGO_CACHE_TTL:
+            return dict(cached[1])
+
+        rows = self._query_scoreboard_games(team_name, last_n)
+        stats = self._summarize_cargo_stats(team_name, rows, last_n)
+        _TEAM_STATS_CARGO_CACHE[cache_key] = (datetime.now(timezone.utc), stats)
+        return dict(stats)
+
+    def _query_scoreboard_games(self, team_name: str, last_n: int) -> list[dict]:
+        terms = self._cargo_team_terms(team_name)
+        if not terms:
+            return []
+        where_terms = []
+        for term in terms:
+            safe = term.replace("'", "''")
+            where_terms.append(f"Team1 LIKE '%{safe}%' OR Team2 LIKE '%{safe}%'")
+        where = (
+            "(" + " OR ".join(f"({term})" for term in where_terms) + ") "
+            "AND DateTime_UTC <= '" + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "'"
+        )
+        fields = (
+            "Team1,Team2,Winner,Team1Kills,Team2Kills,Team1Towers,Team2Towers,"
+            "Team1Dragons,Team2Dragons,Gamelength,DateTime_UTC,OverviewPage"
+        )
+        params = {
+            "action": "cargoquery",
+            "tables": "ScoreboardGames",
+            "fields": fields,
+            "where": where,
+            "order_by": "DateTime_UTC DESC",
+            "limit": str(max(last_n * 4, 40)),
+            "format": "json",
+        }
+        try:
+            response = requests.get(self.LQ_API, params=params, headers=self.LQ_HEADERS, timeout=12)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("error"):
+                return []
+            return [row.get("title", row) for row in data.get("cargoquery", [])]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _cargo_team_terms(team_name: str) -> list[str]:
+        cleaned = fix_name(team_name)
+        key = _team_key(cleaned)
+        terms = {cleaned, key}
+        compact_aliases = {
+            "t1 esports": "T1",
+            "t1": "T1",
+            "gen g esports": "Gen.G",
+            "dplus kia": "Dplus KIA",
+            "hanwha life esports": "Hanwha Life Esports",
+            "jd gaming": "JDG",
+            "bilibili gaming": "BLG",
+            "top esports": "Top Esports",
+            "g2 esports": "G2 Esports",
+        }
+        if key in compact_aliases:
+            terms.add(compact_aliases[key])
+        if key.endswith(" esports"):
+            terms.add(key[:-8].strip())
+        return [term for term in terms if term]
+
+    def _summarize_cargo_stats(self, team_name: str, rows: list[dict], last_n: int) -> dict:
+        target = _team_key(team_name)
+        games: list[dict] = []
+        for row in rows:
+            team1 = str(self._cargo_value(row, "Team1") or "")
+            team2 = str(self._cargo_value(row, "Team2") or "")
+            side = 1 if self._same_cargo_team(target, team1) else (2 if self._same_cargo_team(target, team2) else 0)
+            if not side:
+                continue
+
+            kills_for = self._to_float(self._cargo_value(row, f"Team{side}Kills", f"Team{side} Kills"))
+            kills_against = self._to_float(self._cargo_value(row, f"Team{2 if side == 1 else 1}Kills", f"Team{2 if side == 1 else 1} Kills"))
+            towers = self._to_float(self._cargo_value(row, f"Team{side}Towers", f"Team{side} Towers"))
+            dragons = self._to_float(self._cargo_value(row, f"Team{side}Dragons", f"Team{side} Dragons"))
+            length = self._parse_game_length_minutes(self._cargo_value(row, "Gamelength", "GameLength", "Game Length"))
+            winner = str(self._cargo_value(row, "Winner") or "").strip()
+            won = winner == str(side) or self._same_cargo_team(target, winner)
+            games.append({
+                "kills_for": kills_for,
+                "kills_against": kills_against,
+                "towers": towers,
+                "dragons": dragons,
+                "length": length,
+                "won": won,
+            })
+            if len(games) >= last_n:
+                break
+
+        if not games:
+            return {}
+
+        def avg(key: str) -> float | None:
+            values = [game[key] for game in games if game.get(key) is not None]
+            return float(np.mean(values)) if values else None
+
+        wins = sum(1 for game in games if game["won"])
+        recent = ["W" if game["won"] else "L" for game in games[:5]]
+        avg_kills = avg("kills_for")
+        avg_deaths = avg("kills_against")
+        avg_length = avg("length")
+        avg_towers = avg("towers")
+        avg_dragons = avg("dragons")
+        total_kills = [
+            game["kills_for"] + game["kills_against"]
+            for game in games
+            if game.get("kills_for") is not None and game.get("kills_against") is not None
+        ]
+        winrate = wins / len(games)
+        return {
+            "games_analyzed": len(games),
+            "winrate": float(winrate),
+            "avg_kills": float(avg_kills) if avg_kills is not None else 0.0,
+            "avg_deaths": float(avg_deaths) if avg_deaths is not None else 0.0,
+            "avg_game_length": float(avg_length) if avg_length is not None else 0.0,
+            "avg_towers": float(avg_towers) if avg_towers is not None else 0.0,
+            "avg_dragons": float(avg_dragons) if avg_dragons is not None else 0.0,
+            "total_kills_avg": float(np.mean(total_kills)) if total_kills else 0.0,
+            "form": {
+                "results": recent,
+                "form_class": "good" if winrate >= .58 else ("bad" if winrate <= .43 else "neutral"),
+                "form_label": "Boa fase" if winrate >= .58 else ("Instável" if winrate <= .43 else "Regular"),
+            },
+            "source": "Leaguepedia Cargo",
+        }
+
+    @staticmethod
+    def _same_cargo_team(target_key: str, value: str) -> bool:
+        candidate = _team_key(value)
+        return bool(candidate and (candidate == target_key or candidate in target_key or target_key in candidate))
+
+    @staticmethod
+    def _cargo_value(row: dict, *names: str):
+        normalized = {re.sub(r"[^a-z0-9]", "", str(key).lower()): value for key, value in row.items()}
+        for name in names:
+            if name in row:
+                return row[name]
+            compact = re.sub(r"[^a-z0-9]", "", name.lower())
+            if compact in normalized:
+                return normalized[compact]
+        return None
+
+    @staticmethod
+    def _to_float(value) -> float | None:
+        if value in (None, ""):
+            return None
+        try:
+            return float(str(value).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _parse_game_length_minutes(cls, value) -> float | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if ":" in text:
+            parts = [cls._to_float(part) or 0.0 for part in text.split(":")]
+            if len(parts) == 2:
+                return parts[0] + parts[1] / 60
+            if len(parts) == 3:
+                return parts[0] * 60 + parts[1] + parts[2] / 60
+        numeric = cls._to_float(text)
+        if numeric is None:
+            return None
+        return numeric / 60 if numeric > 90 else numeric
 
     def _estimate_stats(self, name: str, league_code: str) -> dict:
         tier = self.resolve_tier(name)
@@ -1246,13 +1423,15 @@ class DataFetcher:
             "form_class": "good" if winrate >= .58 else ("bad" if winrate <= .43 else "neutral"),
             "form_label": "Boa fase" if winrate >= .58 else ("Instável" if winrate <= .43 else "Regular"),
         }
-        return {
+        estimated = {
             "games_analyzed": 15,
             "tier": tier,
             "winrate": winrate,
             "avg_kills": float(np.clip(rng.normal(profile["kills"], 2.4), 6, 28)),
             "avg_deaths": float(np.clip(rng.normal(profile["kills"] * 0.72, 2.2), 4, 24)),
             "avg_game_length": float(np.clip(rng.normal(profile["length"], 3.0), 24, 46)),
+            "avg_towers": float(np.clip(rng.normal(5.2 + profile["wr"] * 2.6, 1.0), 3, 11)),
+            "avg_dragons": float(np.clip(rng.normal(1.3 + profile["fd"] * 2.1, .65), .5, 4.8)),
             "first_blood_rate": float(np.clip(rng.normal(profile["fb"], 0.07), .25, .82)),
             "first_dragon_rate": float(np.clip(rng.normal(profile["fd"], 0.07), .25, .82)),
             "first_baron_rate": float(np.clip(rng.normal(profile["fd"], 0.07), .25, .82)),
@@ -1261,6 +1440,18 @@ class DataFetcher:
             "form": form,
             "source": f"Estimado Tier {tier}",
         }
+        cargo = self.fetch_team_stats_cargo(name)
+        if not cargo:
+            return estimated
+
+        merged = {**estimated, **{key: value for key, value in cargo.items() if value not in (None, "", 0, 0.0)}}
+        merged["tier"] = tier
+        merged["first_blood_rate"] = estimated["first_blood_rate"]
+        merged["first_dragon_rate"] = estimated["first_dragon_rate"]
+        merged["first_baron_rate"] = estimated["first_baron_rate"]
+        merged["avg_golddiff15"] = estimated["avg_golddiff15"]
+        merged["source"] = cargo.get("source", "Leaguepedia Cargo")
+        return merged
 
     def scrape_liquipedia_url(self, url: str) -> tuple[list[dict], str]:
         return self._fetch_liquipedia_schedule(url), "Liquipedia"

@@ -145,6 +145,8 @@ def _apply_premium_frontend_css() -> None:
         }
         [data-testid="stAppViewContainer"] {
             padding-left:74px !important;
+            margin-top:0 !important;
+            padding-top:0 !important;
             transition:padding-left .24s ease !important;
         }
         body:has(section[data-testid="stSidebar"]:hover) [data-testid="stAppViewContainer"] {
@@ -154,6 +156,8 @@ def _apply_premium_frontend_css() -> None:
             position:fixed !important;
             top:0 !important;
             left:0 !important;
+            margin-top:0 !important;
+            padding-top:0 !important;
             height:100vh !important;
             z-index:999999 !important;
             background-color:#0b1426 !important;

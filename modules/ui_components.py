@@ -123,6 +123,8 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
     color:#C8D4E8!important;}
 [data-testid="stAppViewContainer"]{
     padding-left:74px!important;
+    margin-top:0!important;
+    padding-top:0!important;
     transition:padding-left .24s ease!important;}
 body:has(section[data-testid="stSidebar"]:hover) [data-testid="stAppViewContainer"]{
     padding-left:270px!important;}
@@ -136,6 +138,8 @@ section[data-testid="stSidebar"]{
     position:fixed!important;
     top:0!important;
     left:0!important;
+    margin-top:0!important;
+    padding-top:0!important;
     height:100vh!important;
     z-index:999999!important;
     display:block!important;
@@ -155,7 +159,7 @@ section[data-testid="stSidebar"]:hover{
     max-width:270px!important;}
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{
     width:260px!important;
-    padding:16px 12px!important;
+    padding:0 12px 16px!important;
     overflow-x:hidden!important;}
 [data-testid="collapsedControl"],[data-testid="stSidebarCollapseButton"]{
     display:none!important;}
