@@ -85,18 +85,18 @@ def _render_login():
     [data-testid="stAppViewContainer"]::before{
         content:"";
         position:fixed;
-        inset:-3%;
+        inset:-4%;
         z-index:0;
         pointer-events:none;
         background:
-            radial-gradient(circle at 50% 38%,rgba(168,85,247,.32),transparent 24%),
-            linear-gradient(90deg,rgba(5,3,13,.98) 0%,rgba(24,8,42,.58) 42%,rgba(5,3,13,.96) 100%),
-            linear-gradient(180deg,rgba(5,3,13,.18) 0%,rgba(5,3,13,.86) 78%,#05030D 100%),
-            url("https://w.wallhaven.cc/full/n6/wallhaven-n69ev7.jpg");
+            radial-gradient(circle at 50% 34%,rgba(216,180,254,.22),transparent 22%),
+            linear-gradient(90deg,rgba(5,3,13,.98) 0%,rgba(16,8,31,.28) 42%,rgba(5,3,13,.96) 100%),
+            linear-gradient(180deg,rgba(5,3,13,.10) 0%,rgba(5,3,13,.70) 72%,#05030D 100%),
+            url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Baron_Nashor_Splash_concept_01.jpg");
         background-size:cover;
-        background-position:center 35%;
-        filter:saturate(1.25) contrast(1.08);
-        animation:baronBreath 12s ease-in-out infinite alternate;}
+        background-position:center 34%;
+        filter:saturate(1.18) contrast(1.12) brightness(.86);
+        animation:baronBreath 14s ease-in-out infinite alternate;}
     [data-testid="stAppViewContainer"]::after{
         content:"";
         position:fixed;
@@ -111,34 +111,36 @@ def _render_login():
     .main .block-container{
         position:relative!important;
         z-index:1!important;
-        padding-top:28px!important;
-        max-width:980px!important;}
+        padding-top:34px!important;
+        max-width:1040px!important;}
     section[data-testid="stSidebar"],footer,#MainMenu{display:none!important;}
     .baron-hero{
         text-align:center;
-        padding:18px 0 24px;
+        padding:0 0 10px;
         position:relative;}
     .baron-mark{
-        width:116px;height:116px;margin:0 auto 10px;
-        border-radius:50%;
+        width:84px;height:84px;margin:0 auto 8px;
+        border-radius:18px;
         background:
-            radial-gradient(circle at 50% 35%,rgba(250,245,255,.94) 0%,rgba(168,85,247,.58) 18%,rgba(59,7,100,.22) 44%,transparent 70%);
-        border:1px solid rgba(216,180,254,.42);
-        box-shadow:0 0 34px rgba(168,85,247,.62),inset 0 0 22px rgba(250,245,255,.18);
+            linear-gradient(135deg,rgba(216,180,254,.18),rgba(15,23,42,.88)),
+            radial-gradient(circle at 50% 35%,rgba(250,245,255,.60),rgba(168,85,247,.22) 36%,transparent 72%);
+        border:1px solid rgba(200,155,60,.58);
+        box-shadow:0 0 28px rgba(168,85,247,.48),inset 0 0 20px rgba(250,245,255,.10);
         display:flex;align-items:center;justify-content:center;
+        transform:rotate(45deg);
         animation:baronPulse 2.8s ease-in-out infinite;}
     .baron-mark span{
-        font-size:54px;
+        font-size:42px;
         filter:drop-shadow(0 0 16px rgba(216,180,254,.85));
-        transform:translateY(-1px);}
+        transform:rotate(-45deg) translateY(-1px);}
     .baron-title{
-        font-size:32px;
+        font-size:18px;
         line-height:1;
         font-weight:900;
-        color:#F5F3FF;
+        color:#F7E7B2;
         letter-spacing:-.8px;
-        text-shadow:0 0 22px rgba(168,85,247,.62),0 2px 0 #05030D;}
-    .baron-title b{color:#A855F7;}
+        text-shadow:0 0 18px rgba(200,155,60,.45),0 2px 0 #05030D;}
+    .baron-title b{color:#C084FC;}
     .baron-badge{
         background:linear-gradient(135deg,#7C3AED,#2563EB);
         color:#fff;
@@ -149,19 +151,41 @@ def _render_login():
         margin-left:6px;
         vertical-align:middle;}
     .baron-subtitle{
-        color:#A78BFA;
-        font-size:11px;
+        color:#BDAE7F;
+        font-size:10px;
         font-weight:800;
         letter-spacing:1.8px;
-        margin-top:10px;
+        margin-top:8px;
         text-transform:uppercase;}
     .baron-login-panel{
-        background:linear-gradient(180deg,rgba(15,10,25,.84),rgba(8,6,16,.92));
-        border:1px solid rgba(168,85,247,.45);
-        box-shadow:0 22px 70px rgba(0,0,0,.62),0 0 42px rgba(124,58,237,.20),inset 0 0 0 1px rgba(245,243,255,.05);
-        border-radius:18px;
-        padding:28px 24px;
+        position:relative;
+        max-width:360px;
+        margin:0 auto;
+        background:
+            linear-gradient(180deg,rgba(27,31,43,.94),rgba(8,10,18,.96));
+        border:1px solid rgba(200,155,60,.72);
+        box-shadow:0 22px 70px rgba(0,0,0,.68),0 0 42px rgba(124,58,237,.22),inset 0 0 0 1px rgba(247,231,178,.08);
+        border-radius:10px;
+        padding:22px 24px 18px;
         backdrop-filter:blur(8px);}
+    .baron-login-panel::before{
+        content:"";
+        position:absolute;
+        inset:-10px;
+        z-index:-1;
+        border:1px solid rgba(200,155,60,.40);
+        clip-path:polygon(8% 0,92% 0,100% 12%,100% 88%,92% 100%,8% 100%,0 88%,0 12%);
+        box-shadow:0 0 30px rgba(200,155,60,.18);}
+    .baron-login-panel::after{
+        content:"";
+        position:absolute;
+        left:-90px;
+        right:-90px;
+        top:48%;
+        z-index:-1;
+        height:1px;
+        background:linear-gradient(90deg,transparent,rgba(200,155,60,.55),transparent);
+        box-shadow:0 0 22px rgba(168,85,247,.42);}
     .stButton>button{
         font-family:'Inter',sans-serif!important;
         font-weight:900!important;
@@ -170,12 +194,13 @@ def _render_login():
         min-height:46px!important;
         transition:all .18s ease!important;}
     .stButton>button[kind="primary"]{
-        background:linear-gradient(135deg,#7C3AED,#EC4899)!important;
+        background:linear-gradient(135deg,#0E7490,#1D4ED8)!important;
         color:#fff!important;
-        box-shadow:0 0 28px rgba(168,85,247,.40)!important;}
+        border-color:rgba(103,232,249,.55)!important;
+        box-shadow:0 0 28px rgba(34,211,238,.30)!important;}
     .stButton>button[kind="primary"]:hover{
         transform:translateY(-1px)!important;
-        box-shadow:0 0 42px rgba(236,72,153,.48)!important;}
+        box-shadow:0 0 42px rgba(34,211,238,.46)!important;}
     .stTextInput input{
         background:rgba(10,12,24,.86)!important;
         border:1px solid rgba(168,85,247,.34)!important;
@@ -187,8 +212,8 @@ def _render_login():
         border-color:#C084FC!important;
         box-shadow:0 0 0 1px rgba(192,132,252,.35),0 0 20px rgba(124,58,237,.24)!important;}
     @keyframes baronBreath{
-        0%{transform:scale(1.00) translate3d(0,0,0);background-position:center 35%;}
-        100%{transform:scale(1.045) translate3d(-10px,-8px,0);background-position:center 31%;}}
+        0%{transform:scale(1.00) translate3d(0,0,0);background-position:center 34%;}
+        100%{transform:scale(1.055) translate3d(-12px,-10px,0);background-position:center 29%;}}
     @keyframes voidMist{
         0%{opacity:.56;transform:translateX(-16px);}
         100%{opacity:.86;transform:translateX(18px);}}
@@ -197,13 +222,13 @@ def _render_login():
         50%{transform:scale(1.045);box-shadow:0 0 58px rgba(216,180,254,.78),inset 0 0 30px rgba(250,245,255,.28);}}
     </style>""", unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.4, 1])
+    _, col, _ = st.columns([1, 1.05, 1])
     with col:
         st.markdown("""
         <div class="baron-hero">
           <div class="baron-mark"><span>♛</span></div>
-          <div class="baron-title">Lol<b> Pro</b><span class="baron-badge">v2.0</span></div>
-          <div class="baron-subtitle">Baron Pit Intelligence · Acesso Restrito</div>
+          <div class="baron-title">Lol Predictor<b> Pro</b><span class="baron-badge">v2.0</span></div>
+          <div class="baron-subtitle">Log in to your account</div>
         </div>""", unsafe_allow_html=True)
 
         st.markdown(
