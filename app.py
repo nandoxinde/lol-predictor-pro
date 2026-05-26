@@ -24,6 +24,7 @@ from modules.auth import (
 )
 from modules.bankroll import BankrollManager
 from modules.data_fetcher import DataFetcher, LEAGUE_CONFIDENCE_CAP, now_brt
+from modules.odds_fetcher import OddsPapiClient, odds_pair_key
 from modules.stats_engine import get_roster
 from modules.ui_components import (
     apply_custom_css,
@@ -109,6 +110,11 @@ def _load_matches_cached(cache_key: str, query: str = "") -> tuple[list[dict], s
 @st.cache_data(ttl=300, show_spinner=False)
 def _load_stats_cached(cache_key: str, team: str) -> dict:
     return DataFetcher().fetch_team_stats_cargo(team)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_oddspapi_cached(cache_key: str, matches: list[dict]) -> dict[str, dict]:
+    return OddsPapiClient().fetch_lol_odds_for_matches(matches)
 
 
 def _apply_premium_frontend_css() -> None:
@@ -339,11 +345,17 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
 
         t1_stats = analysis.get("team1_stats", {})
         t2_stats = analysis.get("team2_stats", {})
-        t1_wr = max(float(t1_stats.get("winrate", 0.5) or 0.5), 0.01)
-        t2_wr = max(float(t2_stats.get("winrate", 0.5) or 0.5), 0.01)
-        total_wr = t1_wr + t2_wr
-        odd1 = total_wr / t1_wr
-        odd2 = total_wr / t2_wr
+        if match.get("odds_team1") and match.get("odds_team2"):
+            odd1 = float(match["odds_team1"])
+            odd2 = float(match["odds_team2"])
+            odds_source = match.get("odds_source", "OddsPapi")
+        else:
+            t1_wr = max(float(t1_stats.get("winrate", 0.5) or 0.5), 0.01)
+            t2_wr = max(float(t2_stats.get("winrate", 0.5) or 0.5), 0.01)
+            total_wr = t1_wr + t2_wr
+            odd1 = total_wr / t1_wr
+            odd2 = total_wr / t2_wr
+            odds_source = "Modelo"
         odd_col1, open_col, odd_col2 = st.columns([1, 1.2, 1])
         with odd_col1:
             st.markdown(f'<div class="premium-odd">1&nbsp;&nbsp;{odd1:.2f}</div>', unsafe_allow_html=True)
@@ -353,6 +365,7 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
                 st.rerun()
         with odd_col2:
             st.markdown(f'<div class="premium-odd">2&nbsp;&nbsp;{odd2:.2f}</div>', unsafe_allow_html=True)
+        st.caption(f"Odds: {odds_source}")
 
 
 def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
@@ -561,6 +574,22 @@ if not st.session_state.matches:
         st.session_state.matches, st.session_state.matches_source = _load_matches_cached(_minute_key(), "")
 
 all_matches = list(st.session_state.matches)
+oddspapi_odds = _load_oddspapi_cached(_five_minute_key(), all_matches)
+if oddspapi_odds:
+    enriched_matches = []
+    for match in all_matches:
+        odds = oddspapi_odds.get(odds_pair_key(match.get("team1", ""), match.get("team2", "")))
+        if odds:
+            enriched_matches.append({
+                **match,
+                "odds_team1": odds.get("team1"),
+                "odds_team2": odds.get("team2"),
+                "odds_source": odds.get("source", "OddsPapi"),
+                "odds_bookmaker": odds.get("bookmaker", ""),
+            })
+        else:
+            enriched_matches.append(match)
+    all_matches = enriched_matches
 markets = {
     "Vitória (ML)": True,
     "First Blood": True,
@@ -590,7 +619,8 @@ live_count = sum(1 for match in all_matches if match.get("state") == "inProgress
 next_count = max(0, len(all_matches) - live_count)
 with st.container():
     st.markdown('<div class="premium-title">LOL PREDICTOR PRO</div>', unsafe_allow_html=True)
-    st.markdown('<div class="premium-api-status">API Status: Connected 🟢</div>', unsafe_allow_html=True)
+    odds_status = "OddsPapi conectado 🟢" if oddspapi_odds else "OddsPapi sem odds para estes jogos 🟡"
+    st.markdown(f'<div class="premium-api-status">PandaScore conectado 🟢 · {odds_status}</div>', unsafe_allow_html=True)
     render_hero(live_count, next_count, st.session_state.matches_source)
 
 LEAGUE_FILTERS = [
