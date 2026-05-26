@@ -9,23 +9,30 @@ import streamlit as st
 import hashlib
 import json
 import os
+from modules.config import get_secret
 
 PROFILE_FILE = "data/profile.json"
 DATA_DIR     = "data"
 
-# ── Credenciais fixas ─────────────────────────────────────────────────────
-# Convidados: um usuário, qualquer um que souber a senha entra como convidado
-GUEST_USERNAME = "convidado"
-GUEST_PASSWORD = "lolpro2025"   # ← mude aqui para a senha dos convidados
+OWNER_USERNAME = get_secret("LOL_OWNER_USERNAME", "Fernando")
+OWNER_PASSWORD = get_secret("LOL_OWNER_PASSWORD")
+OWNER_PASSWORD_HASH = get_secret("LOL_OWNER_PASSWORD_HASH") or (
+    hashlib.sha256(OWNER_PASSWORD.encode()).hexdigest() if OWNER_PASSWORD else ""
+)
+GUEST_USERNAME = get_secret("LOL_GUEST_USERNAME", "convidado")
+GUEST_PASSWORD = get_secret("LOL_GUEST_PASSWORD")
+GUEST_PASSWORD_HASH = get_secret("LOL_GUEST_PASSWORD_HASH") or (
+    hashlib.sha256(GUEST_PASSWORD.encode()).hexdigest() if GUEST_PASSWORD else ""
+)
 
 # ── Perfil padrão do dono ─────────────────────────────────────────────────
 DEFAULT_PROFILE = {
-    "username":      "Fernando",
+    "username":      OWNER_USERNAME,
     "display_name":  "Fernando",
-    "password_hash": hashlib.sha256(b"LolPredictor2025!").hexdigest(),
-    "banca_ini":     100.0,
+    "password_hash": OWNER_PASSWORD_HASH,
+    "banca_ini":     0.0,
     "banca_meta":    1000.0,
-    "banca_atual":   100.0,
+    "banca_atual":   0.0,
     "strategy":      "Kelly (Recomendado)",
 }
 
@@ -115,14 +122,17 @@ def _render_login():
                 p = password.strip()
 
                 # Verifica dono
+                owner_hash = OWNER_PASSWORD_HASH or profile.get("password_hash", "")
                 owner_ok = (
                     u == profile["username"].lower() and
-                    _hash(p) == profile["password_hash"]
+                    bool(owner_hash) and
+                    _hash(p) == owner_hash
                 )
                 # Verifica convidado
                 guest_ok = (
                     u == GUEST_USERNAME and
-                    p == GUEST_PASSWORD
+                    bool(GUEST_PASSWORD_HASH) and
+                    _hash(p) == GUEST_PASSWORD_HASH
                 )
 
                 if owner_ok:
@@ -139,9 +149,9 @@ def _render_login():
                     st.session_state.authenticated    = True
                     st.session_state.role             = "guest"
                     st.session_state.profile          = {"display_name": "Convidado"}
-                    st.session_state.banca_ini        = 100.0
+                    st.session_state.banca_ini        = 0.0
                     st.session_state.banca_meta       = 1000.0
-                    st.session_state.banca_atual_sync = 100.0
+                    st.session_state.banca_atual_sync = 0.0
                     st.success("✅ Bem-vindo, Convidado! Acesso somente leitura.")
                     st.rerun()
 
@@ -155,9 +165,9 @@ def _render_login():
             '<div style="background:#0d1520;border:1px solid #1E2D4555;border-radius:8px;'
             'padding:12px 16px;margin-top:12px;">'
             '<div style="font-size:11px;color:#3A4D65;line-height:1.8;">'
-            '🔑 <b style="color:#5A7090;">Dono:</b> usuário <code>Fernando</code> '
+            '🔑 <b style="color:#5A7090;">Dono:</b> usuário configurado no <code>.env</code> '
             '— acesso total<br>'
-            '👥 <b style="color:#5A7090;">Convidado:</b> usuário <code>convidado</code> '
+            '👥 <b style="color:#5A7090;">Convidado:</b> opcional via <code>LOL_GUEST_PASSWORD</code> '
             '— somente análises'
             '</div></div>',
             unsafe_allow_html=True)
@@ -207,14 +217,6 @@ def render_profile_settings():
                 type="password", placeholder="Nova senha...", key="pf_pass")
             new_pass2 = st.text_input("🔒 Confirmar nova senha",
                 type="password", placeholder="Confirmar...", key="pf_pass2")
-
-        # Senha dos convidados
-        st.markdown("---")
-        st.markdown(
-            '<span style="font-size:12px;color:#5A7090;">👥 Senha atual dos convidados: '
-            f'<code>{GUEST_PASSWORD}</code> '
-            '(altere diretamente no código: <code>GUEST_PASSWORD</code> no auth.py)</span>',
-            unsafe_allow_html=True)
 
         if st.form_submit_button("💾 Salvar Perfil",
                                   use_container_width=True, type="primary"):

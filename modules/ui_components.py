@@ -13,6 +13,41 @@ TZ_BRT = timezone(timedelta(hours=-3))
 def _now():
     return datetime.now(tz=TZ_BRT)
 
+_TEAM_COLORS = {
+    "t1": "#C89B3C", "t1 esports": "#C89B3C",
+    "gen.g": "#B8000A", "geng": "#B8000A",
+    "cloud9": "#1A9FFF", "c9": "#1A9FFF",
+    "flyquest": "#00CC66",
+    "loud": "#22CC44",
+    "g2 esports": "#00FF99", "g2": "#00FF99",
+    "fnatic": "#FF6600",
+    "pain gaming": "#FF0066", "pain": "#FF0066", "pain gaming": "#FF0066",
+    "red canids": "#CC0000",
+    "fluxo": "#0066FF", "fluxo w7m": "#0066FF",
+    "furia esports": "#FF6600", "furia": "#FF6600",
+    "kt rolster": "#CC0000", "kt": "#CC0000",
+    "dplus kia": "#0044CC", "dk": "#0044CC",
+    "drx": "#1A6DD4",
+    "hanwha life esports": "#FF3B2F", "hanwha life": "#FF3B2F",
+    "brion": "#00AA44",
+    "bnk fearx": "#FF6B35", "fearx": "#FF6B35",
+    "nongshim redforce": "#FF0000", "nongshim": "#FF0000",
+    "team liquid": "#00AAFF",
+    "100 thieves": "#CC0000",
+    "jdg": "#1A6DD4",
+    "blg": "#0088FF", "bilibili gaming": "#0088FF",
+    "edward gaming": "#0044AA", "edg": "#0044AA",
+}
+
+def _team_color(team_name: str, fallback: str) -> str:
+    n = (team_name or "").lower().strip()
+    if n in _TEAM_COLORS:
+        return _TEAM_COLORS[n]
+    for key, value in _TEAM_COLORS.items():
+        if key in n or n in key:
+            return value
+    return fallback
+
 # ─── Logo — escudo SVG puro (sem URLs externas que podem quebrar) ─────
 def _logo_html(team_name: str, tier_color: str, size: int = 32, image_url: str = "") -> str:
     """
@@ -23,7 +58,7 @@ def _logo_html(team_name: str, tier_color: str, size: int = 32, image_url: str =
     sz   = str(size)
     fs   = str(max(10, int(size * 0.40)))
     # Gradiente baseado na cor do tier
-    c1   = tier_color
+    c1   = _team_color(team_name, tier_color)
     # Escurece o gradiente
     c2   = "#090C14"
     fallback = (
@@ -86,12 +121,23 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
     font-family:'Inter',sans-serif!important;
     color:#C8D4E8!important;}
 .main .block-container{
-    padding-top:0!important;
-    padding-left:14px!important;
-    padding-right:14px!important;
-    max-width:1400px!important;}
-section[data-testid="stSidebar"],footer,#MainMenu,
-[data-testid="stDecoration"],.stDeployButton{display:none!important;}
+    padding-top:8px!important;
+    padding-left:18px!important;
+    padding-right:18px!important;
+    max-width:1580px!important;}
+footer,#MainMenu,[data-testid="stDecoration"],.stDeployButton{display:none!important;}
+section[data-testid="stSidebar"]{
+    display:block!important;
+    background:linear-gradient(180deg,#0F1520 0%,#090C14 100%)!important;
+    border-right:1px solid #1A2235!important;}
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{
+    padding:18px 12px!important;}
+section[data-testid="stSidebar"] .stButton>button{
+    width:100%!important;
+    justify-content:flex-start!important;
+    min-height:42px!important;
+    border-radius:12px!important;
+    padding-left:14px!important;}
 .stButton>button{
     font-family:'Inter',sans-serif!important;
     font-weight:700!important;font-size:13px!important;
@@ -125,7 +171,7 @@ section[data-testid="stSidebar"],footer,#MainMenu,
 details summary{
     background:#0F1520!important;border:1px solid #1E2D45!important;
     border-radius:5px!important;color:#7A8FAA!important;}
-.stDataFrame{border:1px solid #1E2D45!important;border-radius:8px!important;}
+.stDataFrame{border:1px solid #1E2D45!important;border-radius:12px!important;overflow:hidden!important;}
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-track{background:#0B0D11;}
 ::-webkit-scrollbar-thumb{background:#1E2D45;border-radius:2px;}
@@ -134,10 +180,78 @@ iframe[title="streamlit.components.v1.html"]{position:sticky!important;top:8px!i
 hr{border-color:#1A2235!important;margin:6px 0!important;}
 @keyframes live-pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
 .live-dot{animation:live-pulse 1.2s ease infinite;}
+.bb-panel{background:#11151D;border:1px solid #202733;border-radius:12px;padding:12px;}
+.bb-panel-title{font-size:13px;font-weight:900;color:#F5F7FA;margin-bottom:10px;}
+.bb-side-row{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    background:#181D26;border:1px solid #222A36;border-radius:10px;padding:9px 10px;margin:6px 0;}
+.bb-side-row-active{background:#242A36;border-color:#1565C0;box-shadow:inset 3px 0 0 #1565C0;}
+.bb-count{color:#C8D4E8;font-size:11px;background:#2A303B;border-radius:999px;padding:2px 7px;}
+.bb-coupon-empty{height:260px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;color:#6F7888;background:#181C23;border-radius:14px;}
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:#0B0D11;}
+::-webkit-scrollbar-thumb{background:#1E2D45;border-radius:2px;}
+.app-card{
+    background:linear-gradient(180deg,#111827 0%,#0F1520 100%);
+    border:1px solid #1A2235;
+    border-radius:16px;
+    padding:16px;
+    box-shadow:0 18px 44px rgba(0,0,0,.28);
+    margin-bottom:14px;}
+.app-card-title{color:#F5F7FA;font-size:16px;font-weight:900;letter-spacing:.2px;margin-bottom:4px;}
+.app-card-subtitle{color:#5A7090;font-size:12px;margin-bottom:12px;}
+.market-chip{
+    background:#121A2A;
+    border:1px solid #1A2235;
+    border-radius:999px;
+    color:#7A8FAA;
+    font-size:11px;
+    font-weight:800;
+    padding:5px 10px;
+    display:inline-block;
+    margin:3px 4px 3px 0;}
 </style>"""
 
 def apply_custom_css():
     st.markdown(_CSS, unsafe_allow_html=True)
+
+def render_sidebar_navigation(current: str, bankroll: float = 0.0, username: str = "Fernando"):
+    with st.sidebar:
+        st.markdown(
+            f'<div style="padding:8px 6px 14px;">'
+            f'<div style="font-size:24px;font-weight:900;color:#fff;">Lol'
+            f'<span style="color:#1565C0;"> Pro</span></div>'
+            f'<div style="font-size:11px;color:#5A7090;margin-top:4px;">'
+            f'Operação Esports · {username}</div>'
+            f'<div style="margin-top:12px;background:#090C14;border:1px solid #1A2235;'
+            f'border-radius:14px;padding:12px;">'
+            f'<div style="font-size:10px;color:#5A7090;font-weight:800;">BANCA ATUAL</div>'
+            f'<div style="font-size:22px;color:#1A9FFF;font-weight:900;">R$ {bankroll:.2f}</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+
+        items = [
+            ("operacao", "🎮 Jogos de Hoje"),
+            ("stats_t1_dk", "📊 Estatísticas da T1/DK"),
+            ("banca", "⚙️ Painel de Controle"),
+        ]
+        for key, label in items:
+            if st.button(label, key=f"side_nav_{key}", use_container_width=True,
+                         type="primary" if current == key else "secondary"):
+                st.session_state.aba = key
+                st.session_state.selected_match = None
+                st.rerun()
+
+        st.markdown(
+            '<div style="margin-top:18px;padding:12px;border-radius:14px;'
+            'background:#0B0D11;border:1px solid #1A2235;">'
+            '<div style="font-size:11px;color:#5A7090;line-height:1.6;">'
+            '<b style="color:#C8D4E8;">Fluxo</b><br>'
+            '1. Veja os jogos<br>2. Abra a sala de operação<br>3. Registre no painel'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
 
 # ─── Header ───────────────────────────────────────────────────────────
 def render_header(banca_atual, banca_ini, meta, username="Fernando"):
@@ -192,22 +306,74 @@ def render_nav(current: str):
                 st.rerun()
 
 # ─── Hero ─────────────────────────────────────────────────────────────
-_STADIUM = "https://wallpapercave.com/wp/wp9306424.jpg"
+_STADIUM = "https://cdnb.artstation.com/p/assets/images/images/059/542/327/large/kevin-tran-elder-dragon.jpg?1676601959"
 
 def render_hero(n_live: int, n_next: int, source: str = ""):
     live_txt = f"🔴 {n_live} ao vivo  ·  " if n_live > 0 else ""
     demo_txt = "  · ⚠️ Dados demo (PandaScore indisponível)" if source == "demo" else ""
     st.markdown(
-        f'<div style="background:linear-gradient(180deg,'
-        f'rgba(11,13,17,.25) 0%,rgba(11,13,17,.82) 55%,rgba(11,13,17,1) 100%),'
-        f'url({_STADIUM}) center/cover no-repeat;'
-        f'border-radius:10px;padding:22px 20px 14px;margin-bottom:12px;'
-        f'border:1px solid #1A2D4A;">'
-        f'<div style="font-size:22px;font-weight:900;color:#fff;'
+        f'<div style="background:linear-gradient(90deg,'
+        f'rgba(3,7,18,.94) 0%,rgba(3,7,18,.42) 48%,rgba(3,7,18,.94) 100%),'
+        f'linear-gradient(180deg,rgba(3,7,18,.10) 0%,rgba(3,7,18,.88) 100%),'
+        f'url({_STADIUM}) center 42%/cover no-repeat;'
+        f'border-radius:14px;padding:28px 20px 18px;margin-bottom:12px;min-height:112px;'
+        f'border:1px solid rgba(200,155,60,.70);box-shadow:0 18px 42px rgba(0,0,0,.42),'
+        f'inset 0 0 0 1px rgba(247,231,178,.08);overflow:hidden;">'
+        f'<div style="font-size:24px;font-weight:900;color:#fff;'
         f'text-shadow:0 2px 10px rgba(0,0,0,.9);">League of Legends</div>'
-        f'<div style="font-size:11px;color:#4A6080;margin-top:4px;">'
+        f'<div style="font-size:11px;color:#A89B73;margin-top:6px;">'
         f'{live_txt}📅 {n_next} próximos · PandaScore API · cache 60s{demo_txt}</div>'
         f'</div>', unsafe_allow_html=True)
+
+def render_league_sidebar(leagues: list, counts: dict, current: str):
+    st.markdown(
+        '<div class="bb-panel">'
+        '<div class="bb-panel-title">Ligas com jogos</div>'
+        '<div style="display:flex;gap:8px;align-items:center;background:#0B0D11;'
+        'border:1px solid #202733;border-radius:10px;padding:8px 10px;margin-bottom:10px;">'
+        '<span style="color:#6F7888;font-size:13px;">Filtrar calendário</span>'
+        '</div>',
+        unsafe_allow_html=True)
+
+    total = sum(counts.values())
+    rows = [("all", "Todos os jogos", total)] + [
+        (code, label, counts.get(code, 0)) for code, label in leagues if counts.get(code, 0) > 0
+    ]
+    for idx, (code, label, count) in enumerate(rows):
+        active = current == code if idx != 0 else current == "all"
+        suffix = "jogo" if count == 1 else "jogos"
+        btn_label = f"{label} - {count} {suffix}"
+        if st.button(btn_label, key=f"league_side_{idx}_{code}", use_container_width=True,
+                     type="primary" if active else "secondary"):
+            st.session_state.league_filter = code
+            st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def render_coupon_panel(selected_match=None, bankroll=0.0):
+    st.markdown(
+        '<div class="bb-panel">'
+        '<div class="bb-panel-title">Cupom</div>',
+        unsafe_allow_html=True)
+    if not selected_match:
+        st.markdown(
+            '<div class="bb-coupon-empty">'
+            '<div style="font-size:46px;margin-bottom:12px;">🎟️</div>'
+            '<div style="font-size:16px;font-weight:900;color:#F5F7FA;">Ainda não há eventos</div>'
+            '<div style="font-size:12px;margin-top:8px;max-width:210px;">'
+            'Clique em qualquer odd ou partida para preparar sua análise.</div>'
+            '</div>',
+            unsafe_allow_html=True)
+    else:
+        t1 = selected_match.get("team1", "Time 1")
+        t2 = selected_match.get("team2", "Time 2")
+        st.markdown(
+            f'<div style="background:#181C23;border:1px solid #202733;border-radius:12px;padding:12px;">'
+            f'<div style="font-size:12px;color:#6F7888;">Partida selecionada</div>'
+            f'<div style="font-size:14px;font-weight:900;color:#F5F7FA;margin-top:4px;">{t1} vs {t2}</div>'
+            f'<div style="font-size:12px;color:#1565C0;margin-top:10px;">Banca: R$ {bankroll:.2f}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Filtros de tempo ─────────────────────────────────────────────────
 def filter_matches_by_time(matches: list, time_filter: str) -> list:
@@ -287,6 +453,7 @@ def render_match_list(matches: list, analysis_map: dict,
             is_sel = (selected_id == mid)
             bg  = "#141C2E" if is_sel else "#0F1520"
             bdr = "#1565C0" if is_sel else "#1A2235"
+            accent = "#1565C0" if is_sel else ("#EF4444" if is_live else "#1A2235")
 
             # Live dot animado
             live_dot = (
@@ -315,24 +482,24 @@ def render_match_list(matches: list, analysis_map: dict,
 
             # HTML da linha completa
             row = (
-                f'<div style="background:{bg};border:1px solid {bdr};border-radius:7px;'
-                f'margin-bottom:3px;padding:10px 14px;'
-                f'display:flex;align-items:center;gap:12px;">'
+                f'<div style="background:{bg};border:1px solid {bdr};border-left:3px solid {accent};'
+                f'border-radius:8px;margin-bottom:4px;padding:8px 10px;'
+                f'display:flex;align-items:center;gap:12px;box-shadow:0 6px 18px rgba(0,0,0,.18);">'
 
                 # Time 1
                 f'<div style="display:flex;align-items:center;gap:8px;flex:2.5;min-width:0;">'
                 + logo1 +
                 f'<div style="min-width:0;">'
-                f'<div style="font-size:13px;font-weight:700;color:#C8D4E8;'
+                f'<div style="font-size:13px;font-weight:800;color:#C8D4E8;'
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t1}</div>'
-                f'<div style="font-size:10px;color:#3A4D65;">Nível {t1t}</div>'
+                f'<div style="font-size:9px;color:#5A7090;text-transform:uppercase;">Nível {t1t}</div>'
                 f'</div></div>'
 
                 # Centro: horário + palpite
                 f'<div style="text-align:center;flex:2;min-width:90px;">'
                 f'{live_dot}'
-                f'<div style="font-size:13px;font-weight:800;color:{time_color};">{time_label}</div>'
-                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">Bo{bo}</div>'
+                f'<div style="font-size:12px;font-weight:900;color:{time_color};">{time_label}</div>'
+                f'<div style="font-size:9px;color:#5A7090;margin-top:1px;">Bo{bo}</div>'
                 f'{pick_html}'
                 f'</div>'
 
@@ -340,23 +507,23 @@ def render_match_list(matches: list, analysis_map: dict,
                 f'<div style="display:flex;align-items:center;gap:8px;'
                 f'flex:2.5;justify-content:flex-end;min-width:0;">'
                 f'<div style="text-align:right;min-width:0;">'
-                f'<div style="font-size:13px;font-weight:700;color:#C8D4E8;'
+                f'<div style="font-size:13px;font-weight:800;color:#C8D4E8;'
                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t2}</div>'
-                f'<div style="font-size:10px;color:#3A4D65;">Nível {t2t}</div>'
+                f'<div style="font-size:9px;color:#5A7090;text-transform:uppercase;">Nível {t2t}</div>'
                 f'</div>'
                 + logo2 +
                 f'</div>'
 
                 # Odds
                 f'<div style="display:flex;gap:4px;flex-shrink:0;">'
-                f'<div style="background:#131926;border:1px solid #1E2D45;border-radius:4px;'
-                f'padding:6px 10px;text-align:center;min-width:48px;">'
-                f'<div style="font-size:9px;color:#3A4D65;">1</div>'
+                f'<div style="background:#121A2A;border:1px solid #1A2235;border-radius:6px;'
+                f'padding:6px 10px;text-align:center;min-width:52px;">'
+                f'<div style="font-size:9px;color:#5A7090;">1</div>'
                 f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o1:.2f}</div>'
                 f'</div>'
-                f'<div style="background:#131926;border:1px solid #1E2D45;border-radius:4px;'
-                f'padding:6px 10px;text-align:center;min-width:48px;">'
-                f'<div style="font-size:9px;color:#3A4D65;">2</div>'
+                f'<div style="background:#121A2A;border:1px solid #1A2235;border-radius:6px;'
+                f'padding:6px 10px;text-align:center;min-width:52px;">'
+                f'<div style="font-size:9px;color:#5A7090;">2</div>'
                 f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o2:.2f}</div>'
                 f'</div>'
                 f'</div>'
@@ -364,13 +531,13 @@ def render_match_list(matches: list, analysis_map: dict,
             )
             st.markdown(row, unsafe_allow_html=True)
 
-            # Botão clicável
-            btn_label = f"🔍  {t1} vs {t2}"
-            if st.button(btn_label, key=f"row_{mid}",
-                         use_container_width=True,
-                         type="primary" if is_sel else "secondary"):
-                st.session_state.selected_match = m
-                st.rerun()
+            _, action_col = st.columns([6, 1])
+            with action_col:
+                if st.button("Abrir", key=f"row_{mid}",
+                             use_container_width=True,
+                             type="primary" if is_sel else "secondary"):
+                    st.session_state.selected_match = m
+                    st.rerun()
 
 # ─── Sala de Operação ─────────────────────────────────────────────────
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
@@ -732,7 +899,7 @@ def render_bankroll_tab(history, save_fn, calc_fn):
 
     ci1, ci2, ci3 = st.columns(3)
     with ci1:
-        ni = st.number_input("💵 Banca Inicial (R$)", min_value=1.,
+        ni = st.number_input("💵 Banca Inicial (R$)", min_value=0.,
                               value=float(st.session_state.banca_ini), step=10., key="cfg_ini")
     with ci2:
         nm = st.number_input("🎯 Meta (R$)", min_value=ni+1.,

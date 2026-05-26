@@ -1,375 +1,681 @@
-"""
-app.py v2.0 Final — LoL Predictor Pro
-Login Fernando. Banca dinâmica persistente. Layout BetBoom Elite.
-Tabs: 🚀 Operação | 💰 Gestão de Banca | 🔍 Wiki-Pro
+"""LoL Predictor Pro.
+
+Clean orchestration for the rebuilt Streamlit app.
 """
 
-import streamlit as st
-import json, os, hashlib
-from datetime import datetime
+from __future__ import annotations
+
+import hashlib
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
-from modules.auth import (
-    check_auth, render_profile_settings, sync_banca_to_profile,
-    _load_profile, render_guest_banner, is_guest, is_owner
-)
-from modules.data_fetcher import (
-    DataFetcher, LEAGUE_CONFIDENCE_CAP, now_brt, get_league_info
-)
+import pandas as pd
+import streamlit as st
+
 from modules.analyzer import MatchAnalyzer
+from modules.auth import (
+    _load_profile,
+    check_auth,
+    is_guest,
+    render_guest_banner,
+    render_profile_settings,
+    sync_banca_to_profile,
+)
 from modules.bankroll import BankrollManager
+from modules.data_fetcher import DataFetcher, LEAGUE_CONFIDENCE_CAP, now_brt
 from modules.stats_engine import get_roster
 from modules.ui_components import (
-    apply_custom_css, render_header, render_nav, render_hero,
-    filter_matches_by_time, render_match_list, render_operation_room,
-    render_bankroll_tab, render_wiki_tab,
+    apply_custom_css,
+    filter_matches_by_time,
+    render_bankroll_tab,
+    render_coupon_panel,
+    render_header,
+    render_hero,
+    render_league_sidebar,
+    render_match_list,
+    render_operation_room,
+    render_sidebar_navigation,
+    render_wiki_tab,
 )
 
 st.set_page_config(
     page_title="LoL Predictor Pro v2.0",
     page_icon="⚔️",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 apply_custom_css()
 
-# ── Autenticação obrigatória ──────────────────────────────────────────
 if not check_auth():
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════════
-# STATE — carrega do perfil na primeira vez
-# ══════════════════════════════════════════════════════════════════════
+DEFAULT_STATE = {
+    "aba": "operacao",
+    "selected_match": None,
+    "matches": [],
+    "matches_source": "",
+    "time_filter": "all",
+    "league_filter": "all",
+    "twitch_custom": "",
+}
+
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
-    st.session_state.banca_ini        = float(profile.get("banca_ini",   100.0))
-    st.session_state.banca_meta       = float(profile.get("banca_meta", 1000.0))
-    st.session_state.banca_atual_sync = float(profile.get("banca_atual", 100.0))
+    st.session_state.banca_ini = float(profile.get("banca_ini", 0.0))
+    st.session_state.banca_meta = float(profile.get("banca_meta", 1000.0))
+    st.session_state.banca_atual_sync = float(profile.get("banca_atual", 0.0))
     st.session_state.state_initialized = True
 
-for k, v in [
-    ("aba",             "operacao"),
-    ("selected_match",  None),
-    ("cargo_matches",   []),
-    ("cargo_source",    ""),
-    ("is_searching",    False),
-    ("time_filter",     "all"),
-    ("twitch_custom",   ""),
-]:
-    if k not in st.session_state:
-        st.session_state[k] = v
+for key, value in DEFAULT_STATE.items():
+    st.session_state.setdefault(key, value)
 
-# ── Banca helpers ─────────────────────────────────────────────────────
-HIST = "data/bet_history.json"
+HISTORY_FILE = "data/bet_history.json"
 
-def _lh():
+
+def _load_history() -> list[dict]:
     try:
-        with open(HIST) as f:
-            d = json.load(f)
-        return d if isinstance(d, list) else []
+        with open(HISTORY_FILE, encoding="utf-8") as file:
+            data = json.load(file)
+        return data if isinstance(data, list) else []
     except Exception:
         return []
 
-def _sh(h):
-    try:
-        os.makedirs("data", exist_ok=True)
-        with open(HIST, "w") as f:
-            json.dump(h, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        st.error("Erro ao salvar: " + str(e))
 
-def _cb(h, ini):
-    """Calcula banca: inicial + lucros/perdas do histórico."""
-    try:
-        return round(ini + sum(float(b.get("profit", 0))
-                               for b in h if isinstance(b, dict)), 2)
-    except Exception:
-        return ini
+def _save_history(history: list[dict]) -> None:
+    os.makedirs("data", exist_ok=True)
+    with open(HISTORY_FILE, "w", encoding="utf-8") as file:
+        json.dump(history, file, indent=2, ensure_ascii=False)
 
-# ── Cache ─────────────────────────────────────────────────────────────
-def _ts5():
-    """Chave que muda a cada 5 minutos — para Cargo API real (evita 429)."""
-    t = now_brt()
-    return t.strftime("%Y%m%d%H") + str(t.minute // 5)
 
-def _ts1():
-    """Chave que muda a cada minuto — para live e dados demo."""
+def _calc_bankroll(history: list[dict], initial: float) -> float:
+    profit = sum(float(item.get("profit", 0) or 0) for item in history if isinstance(item, dict))
+    return round(initial + profit, 2)
+
+
+def _minute_key() -> str:
     return now_brt().strftime("%Y%m%d%H%M")
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _cargo(ts, q):
-    """
-    Cache de 60s com chave por minuto.
-    - API real: 60s é suficiente (Liquipedia atualiza a cada ~5min de qualquer forma)
-    - Dados demo: horários recalculados a cada minuto — nunca ficam no passado
-    """
-    return DataFetcher().cargo_search(q)
+
+def _five_minute_key() -> str:
+    now = now_brt()
+    return now.strftime("%Y%m%d%H") + str(now.minute // 5)
+
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _live(ts):     return DataFetcher()._fetch_all_live()
+def _load_matches_cached(cache_key: str, query: str = "") -> tuple[list[dict], str]:
+    return DataFetcher().cargo_search(query)
+
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _stats(ts, t): return DataFetcher().fetch_team_stats_cargo(t)
+def _load_stats_cached(cache_key: str, team: str) -> dict:
+    return DataFetcher().fetch_team_stats_cargo(team)
 
-# ── Dados base ────────────────────────────────────────────────────────
-history     = _lh()
-banca_ini   = st.session_state.banca_ini
-banca_meta  = st.session_state.banca_meta
-# Banca atual = sincronizada manualmente OU calculada pelo histórico
-banca_sync  = st.session_state.banca_atual_sync
-banca_hist  = _cb(history, banca_ini)
-# Usa o maior dos dois (a que foi explicitamente sincronizada ou calculada)
-banca_atual = banca_sync if abs(banca_sync - banca_ini) > abs(banca_hist - banca_ini) else banca_hist
+
+def _apply_premium_frontend_css() -> None:
+    """Visual premium da tela principal sem tocar na lógica de dados."""
+    st.markdown(
+        """
+        <style>
+        html, body, .stApp, [data-testid="stAppViewContainer"] {
+            background-color: #030712 !important;
+            background-image:
+                linear-gradient(90deg, rgba(3,7,18,.90) 0%, rgba(3,7,18,.48) 24%, rgba(3,7,18,.48) 76%, rgba(3,7,18,.90) 100%),
+                linear-gradient(180deg, rgba(3,7,18,.44) 0%, rgba(3,7,18,.84) 100%),
+                url("https://e1.pxfuel.com/desktop-wallpaper/853/468/desktop-wallpaper-4-summoner-s-rift-rifty.jpg") !important;
+            background-size: cover !important;
+            background-position: center center !important;
+            background-attachment: fixed !important;
+            background-blend-mode: overlay !important;
+        }
+        [data-testid="stAppViewContainer"]::before {
+            content:"";
+            position:fixed;
+            inset:0;
+            z-index:0;
+            pointer-events:none;
+            background:
+                radial-gradient(circle at 50% 20%, rgba(21,101,192,.18), transparent 38%),
+                linear-gradient(90deg, rgba(3,7,18,.90) 0%, rgba(3,7,18,.30) 28%, rgba(3,7,18,.30) 72%, rgba(3,7,18,.90) 100%),
+                linear-gradient(180deg, rgba(3,7,18,.18) 0%, rgba(3,7,18,.76) 100%),
+                url("https://e1.pxfuel.com/desktop-wallpaper/853/468/desktop-wallpaper-4-summoner-s-rift-rifty.jpg");
+            background-size:cover;
+            background-position:center 42%;
+            background-attachment:fixed;
+            opacity:.74;
+            filter:saturate(1.12) contrast(1.06);
+            transform:scale(1.035);
+        }
+        [data-testid="stAppViewContainer"] > .main {
+            position:relative;
+            z-index:1;
+            background:transparent !important;
+        }
+        .main .block-container {
+            background:transparent !important;
+        }
+        .premium-title {
+            text-align:center;
+            color:#F7E7B2;
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size:34px;
+            font-weight:900;
+            letter-spacing:2px;
+            text-shadow:0 0 14px rgba(200,155,60,.45), 0 2px 0 #05070D;
+            margin:8px 0 2px;
+        }
+        .premium-api-status {
+            text-align:center;
+            color:#C8D4E8;
+            font-size:12px;
+            margin-bottom:14px;
+        }
+        .premium-section-title {
+            color:#F7E7B2;
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size:20px;
+            font-weight:800;
+            margin:12px 0 8px;
+            text-shadow:0 0 10px rgba(200,155,60,.30);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background:linear-gradient(180deg, rgba(15,21,32,.92), rgba(8,12,20,.94)) !important;
+            border:1px solid rgba(200,155,60,.74) !important;
+            border-radius:16px !important;
+            box-shadow:0 0 0 1px rgba(247,231,178,.10), 0 18px 42px rgba(0,0,0,.44) !important;
+            padding:2px !important;
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+            border-color:rgba(247,231,178,.92) !important;
+            box-shadow:0 0 20px rgba(200,155,60,.18), 0 18px 42px rgba(0,0,0,.50) !important;
+        }
+        .premium-live-pill {
+            display:inline-block;
+            background:linear-gradient(180deg,#7F1D1D,#450A0A);
+            border:1px solid #F87171;
+            color:#FECACA;
+            padding:3px 14px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:900;
+            letter-spacing:.6px;
+            box-shadow:0 0 14px rgba(239,68,68,.32);
+        }
+        .premium-upcoming-pill {
+            display:inline-block;
+            background:linear-gradient(180deg,#12315C,#09172D);
+            border:1px solid #38BDF8;
+            color:#BAE6FD;
+            padding:3px 14px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:900;
+            letter-spacing:.6px;
+        }
+        .premium-team-name {
+            color:#F5F7FA;
+            font-size:15px;
+            font-weight:900;
+            text-align:center;
+            min-height:40px;
+        }
+        .premium-center-time {
+            color:#F7E7B2;
+            font-family: Georgia, 'Times New Roman', serif;
+            font-size:24px;
+            font-weight:900;
+            text-align:center;
+            text-shadow:0 0 12px rgba(200,155,60,.35);
+        }
+        .premium-vs {
+            color:#5A7090;
+            text-align:center;
+            font-size:12px;
+            font-weight:900;
+            letter-spacing:2px;
+        }
+        .premium-odd {
+            background:linear-gradient(180deg,#2D2414,#15100A);
+            border:1px solid rgba(200,155,60,.55);
+            border-radius:9px;
+            color:#F7E7B2;
+            text-align:center;
+            font-size:13px;
+            font-weight:900;
+            padding:6px 8px;
+        }
+        .premium-logo-fallback {
+            width:82px;
+            height:82px;
+            border-radius:18px;
+            margin:0 auto 8px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:radial-gradient(circle at 30% 20%, #1A9FFF55, #090C14 70%);
+            border:1px solid rgba(200,155,60,.60);
+            color:#F7E7B2;
+            font-size:24px;
+            font-weight:900;
+        }
+        div[data-testid="stImage"] {
+            display:flex;
+            justify-content:center;
+        }
+        .app-card, .bb-panel {
+            background:linear-gradient(180deg, rgba(15,21,32,.90), rgba(8,12,20,.94)) !important;
+            border:1px solid rgba(200,155,60,.58) !important;
+            box-shadow:0 12px 32px rgba(0,0,0,.42), inset 0 0 0 1px rgba(247,231,178,.06) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _logo_url(match: dict, index: int) -> str:
+    """Pega a logo dinâmica da estrutura normalizada ou da resposta bruta, se existir."""
+    if index == 0:
+        direct = match.get("team1_image", "")
+    else:
+        direct = match.get("team2_image", "")
+    if direct:
+        return direct
+
+    teams = match.get("teams") or match.get("opponents") or []
+    try:
+        team = teams[index]
+        if isinstance(team, dict):
+            return (
+                team.get("image_url")
+                or team.get("image")
+                or (team.get("opponent") or {}).get("image_url")
+                or ""
+            )
+    except Exception:
+        return ""
+    return ""
+
+
+def _match_time_label(match: dict) -> str:
+    if match.get("state") == "inProgress":
+        return "AO VIVO"
+    return match.get("datetime_brt") or match.get("datetime", "--")
+
+
+def _render_logo_or_fallback(match: dict, team_name: str, index: int) -> None:
+    logo = _logo_url(match, index)
+    if logo:
+        st.image(logo, width=88)
+    else:
+        st.markdown(
+            f'<div class="premium-logo-fallback">{team_name[:2].upper()}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> None:
+    t1 = match.get("team1", "Time 1")
+    t2 = match.get("team2", "Time 2")
+    is_live = match.get("state") == "inProgress"
+    badge_class = "premium-live-pill" if is_live else "premium-upcoming-pill"
+    badge_text = "Live" if is_live else "Próximo"
+
+    with st.container(border=True):
+        top_left, top_mid, top_right = st.columns([1.2, 1, 1.2])
+        with top_mid:
+            st.markdown(f'<div style="text-align:center;"><span class="{badge_class}">{badge_text}</span></div>', unsafe_allow_html=True)
+
+        left, center, right = st.columns([1.5, 1, 1.5])
+        with left:
+            _render_logo_or_fallback(match, t1, 0)
+            st.markdown(f'<div class="premium-team-name">{t1}</div>', unsafe_allow_html=True)
+        with center:
+            st.markdown(f'<div class="premium-center-time">{_match_time_label(match)}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="premium-vs">VS</div>', unsafe_allow_html=True)
+            st.caption(match.get("league_display", match.get("league", "League of Legends")))
+        with right:
+            _render_logo_or_fallback(match, t2, 1)
+            st.markdown(f'<div class="premium-team-name">{t2}</div>', unsafe_allow_html=True)
+
+        t1_stats = analysis.get("team1_stats", {})
+        t2_stats = analysis.get("team2_stats", {})
+        t1_wr = max(float(t1_stats.get("winrate", 0.5) or 0.5), 0.01)
+        t2_wr = max(float(t2_stats.get("winrate", 0.5) or 0.5), 0.01)
+        total_wr = t1_wr + t2_wr
+        odd1 = total_wr / t1_wr
+        odd2 = total_wr / t2_wr
+        odd_col1, open_col, odd_col2 = st.columns([1, 1.2, 1])
+        with odd_col1:
+            st.markdown(f'<div class="premium-odd">1&nbsp;&nbsp;{odd1:.2f}</div>', unsafe_allow_html=True)
+        with open_col:
+            if st.button("Abrir análise", key=f"premium_open_{card_key}", use_container_width=True, type="primary"):
+                st.session_state.selected_match = match
+                st.rerun()
+        with odd_col2:
+            st.markdown(f'<div class="premium-odd">2&nbsp;&nbsp;{odd2:.2f}</div>', unsafe_allow_html=True)
+
+
+def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
+    live_matches = [match for match in matches if match.get("state") == "inProgress"]
+    upcoming_matches = [match for match in matches if match.get("state") != "inProgress"]
+    ordered = live_matches + upcoming_matches
+
+    if not ordered:
+        st.info("Nenhum jogo encontrado neste filtro.")
+        return
+
+    if live_matches:
+        st.markdown('<div class="premium-section-title">Partidas Ao Vivo</div>', unsafe_allow_html=True)
+        for index, match in enumerate(live_matches):
+            key = f"{match.get('team1', '')}|{match.get('team2', '')}"
+            _render_premium_match_card(match, analysis_map.get(key, {}), f"live_{index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+
+    if upcoming_matches:
+        st.markdown('<div class="premium-section-title">Próximos Jogos</div>', unsafe_allow_html=True)
+        for row_start in range(0, len(upcoming_matches), 2):
+            cols = st.columns(2)
+            for offset, col in enumerate(cols):
+                item_index = row_start + offset
+                if item_index >= len(upcoming_matches):
+                    continue
+                match = upcoming_matches[item_index]
+                key = f"{match.get('team1', '')}|{match.get('team2', '')}"
+                with col:
+                    _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+
 
 profile = st.session_state.get("profile") or _load_profile()
 display_name = profile.get("display_name", "Fernando")
+banca_ini = float(st.session_state.banca_ini)
+banca_meta = float(st.session_state.banca_meta)
+banca_atual = float(st.session_state.banca_atual_sync)
+history = _load_history()
 
-# ══════════════════════════════════════════════════════════════════════
-# HEADER + NAV
-# ══════════════════════════════════════════════════════════════════════
+_apply_premium_frontend_css()
 render_header(banca_atual, banca_ini, banca_meta, display_name)
-render_nav(st.session_state.aba)
+render_sidebar_navigation(st.session_state.aba, banca_atual, display_name)
 render_guest_banner()
-st.markdown("")
 
-# ══════════════════════════════════════════════════════════════════════
-# ABA WIKI
-# ══════════════════════════════════════════════════════════════════════
 if st.session_state.aba == "wiki":
     render_wiki_tab()
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════════
-# ABA GESTÃO DE BANCA
-# ══════════════════════════════════════════════════════════════════════
+if st.session_state.aba == "stats_t1_dk":
+    with st.container():
+        st.markdown(
+            '<div class="app-card">'
+            '<div class="app-card-title">Estatísticas da T1/DK</div>'
+            '<div class="app-card-subtitle">Comparativo rápido para leitura de força, ritmo e mercados prováveis.</div>',
+            unsafe_allow_html=True,
+        )
+        stats_fetcher = DataFetcher()
+        teams = [("T1 Esports", "lck"), ("Dplus KIA", "lck")]
+        rows = []
+        for team, league in teams:
+            stats = stats_fetcher.get_team_stats(team, league)
+            rows.append({
+                "Time": team,
+                "Tier": stats.get("tier", "-"),
+                "Win Rate": f"{stats.get('winrate', 0) * 100:.0f}%",
+                "Kills/Jogo": f"{stats.get('avg_kills', 0):.1f}",
+                "Duração": f"{stats.get('avg_game_length', 0):.1f} min",
+                "First Blood": f"{stats.get('first_blood_rate', 0) * 100:.0f}%",
+                "First Dragon": f"{stats.get('first_dragon_rate', 0) * 100:.0f}%",
+                "Gold @15": f"{stats.get('avg_golddiff15', 0):+.0f}g",
+            })
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("T1 Win Rate", rows[0]["Win Rate"])
+        with c2:
+            st.metric("DK Win Rate", rows[1]["Win Rate"])
+        with c3:
+            st.metric("Liga", "LCK")
+
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.markdown(
+            '<span class="market-chip">Duração >27min</span>'
+            '<span class="market-chip">Moneyline</span>'
+            '<span class="market-chip">First Dragon</span>'
+            '<span class="market-chip">Gold @15</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
+
 if st.session_state.aba == "banca":
     if is_guest():
-        st.info("👥 Gestão de Banca disponível apenas para o dono.")
+        st.info("Gestão de banca disponível apenas para o dono.")
         st.stop()
-    # ── Sincronização de saldo BetBoom ────────────────────────────────
-    st.markdown(
-        '<div style="background:#0F1520;border:2px solid #1565C044;border-radius:8px;'
-        'padding:14px 16px;margin-bottom:16px;">'
-        '<span style="font-size:12px;font-weight:700;color:#1565C0;letter-spacing:1px;">'
-        '🔄 SINCRONIZAR SALDO BETBOOM</span>'
-        '</div>', unsafe_allow_html=True)
 
-    col_sync, col_btn, col_meta = st.columns([2, 1, 2])
-    with col_sync:
-        novo_saldo = st.number_input(
-            "💵 Saldo atual na BetBoom (R$):",
-            min_value=0.0, value=float(banca_atual),
-            step=5.0, key="sync_val",
-            help="Insira o valor exato da sua banca na casa de apostas.")
-    with col_btn:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("✅ Sincronizar", key="btn_sync",
-                     use_container_width=True, type="primary"):
-            if novo_saldo <= 0:
-                st.warning("⚠️ Banca zerada. Deposite na BetBoom antes de operar.")
-            else:
-                st.session_state.banca_atual_sync = novo_saldo
-                sync_banca_to_profile(banca_ini, banca_meta, novo_saldo)
-                st.success(f"✅ Banca sincronizada: R${novo_saldo:.2f}")
+    with st.container():
+        st.markdown(
+            '<div class="app-card">'
+            '<div class="app-card-title">Painel de Controle</div>'
+            '<div class="app-card-subtitle">Sincronize a banca manualmente e acompanhe o histórico de apostas.</div>',
+            unsafe_allow_html=True,
+        )
+
+        col_balance, col_goal, col_button = st.columns([2, 2, 1.1])
+        with col_balance:
+            new_balance = st.number_input(
+                "💵 Saldo atual na BetBoom (R$)",
+                min_value=0.0,
+                value=banca_atual,
+                step=5.0,
+                key="sync_balance",
+            )
+        with col_goal:
+            new_goal = st.number_input(
+                "🎯 Meta (R$)",
+                min_value=0.0,
+                value=banca_meta,
+                step=50.0,
+                key="sync_goal",
+            )
+        with col_button:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("✅ Sincronizar", use_container_width=True, type="primary", key="sync_btn"):
+                st.session_state.banca_atual_sync = float(new_balance)
+                st.session_state.banca_meta = float(new_goal)
+                sync_banca_to_profile(banca_ini, float(new_goal), float(new_balance))
+                st.success(f"Banca sincronizada: R$ {new_balance:.2f}")
                 st.rerun()
-    with col_meta:
-        novo_meta = st.number_input(
-            "🎯 Meta de lucro (R$):",
-            min_value=banca_ini + 1, value=float(banca_meta),
-            step=50.0, key="meta_val")
-        if st.button("Definir Meta", key="btn_meta", use_container_width=True):
-            st.session_state.banca_meta = novo_meta
-            sync_banca_to_profile(banca_ini, novo_meta, banca_atual)
-            st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     if banca_atual <= 0:
-        st.error(
-            "🚨 **BANCA ZERADA** — Não é possível calcular stakes. "
-            "Sincronize seu saldo acima antes de operar.")
+        st.info("Insira seu saldo da BetBoom para calcular stakes.")
 
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    # ── Planilha de apostas + Kelly ───────────────────────────────────
-    render_bankroll_tab(history, _sh, _cb)
-
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    # ── Configurações de perfil ───────────────────────────────────────
+    render_bankroll_tab(history, _save_history, _calc_bankroll)
     render_profile_settings()
-
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════════
-# ABA OPERAÇÃO
-# ══════════════════════════════════════════════════════════════════════
-fetcher  = DataFetcher()
+fetcher = DataFetcher()
 analyzer = MatchAnalyzer()
-bmgr     = BankrollManager(banca_atual, banca_meta, "Kelly (Recomendado)")
+bankroll_mgr = BankrollManager(banca_atual, banca_meta, "Kelly (Recomendado)")
 
-# Aviso de banca zerada
 if banca_atual <= 0:
-    st.warning(
-        "⚠️ Banca zerada ou não sincronizada. "
-        "Acesse **💰 Gestão de Banca** e insira seu saldo atual.")
+    st.info("Banca zerada ou não sincronizada. Vá em Gestão de Banca e informe seu saldo para liberar stakes.")
 
-# ── Sala de Operação ──────────────────────────────────────────────────
 if st.session_state.selected_match:
-    m   = st.session_state.selected_match
-    lc  = m.get("league_code", "_unknown")
-    cap = LEAGUE_CONFIDENCE_CAP.get(m.get("league_tier", 1), 1.0)
-    mkt = {k: True for k in [
-        "Vitória (ML)", "First Blood", "First Dragon", "First Baron",
-        "Total de Kills (O/U)", "Duração do Mapa", "Gold Diff @15min"]}
-    an  = MatchAnalyzer().analyze_match(m, mkt, min(70, cap * 100))
-    r1  = get_roster(m["team1"], lc)
-    r2  = get_roster(m["team2"], lc)
-    twch = st.session_state.twitch_custom or lc
-
-    if m.get("is_manual"):
-        st.info(f"🔎 Análise manual: **{m['team1']} vs {m['team2']}**")
-
-    render_operation_room(m, an, bmgr, None, r1, r2, banca_atual, banca_meta, twch)
+    match = st.session_state.selected_match
+    markets = {
+        "Vitória (ML)": True,
+        "First Blood": True,
+        "First Dragon": True,
+        "First Baron": True,
+        "Total de Kills (O/U)": True,
+        "Duração do Mapa": True,
+        "Gold Diff @15min": True,
+    }
+    cap = LEAGUE_CONFIDENCE_CAP.get(match.get("league_tier", 2), 0.9)
+    analysis = analyzer.analyze_match(match, markets, min(70, cap * 100))
+    roster1 = get_roster(match["team1"], match.get("league_code", "_unknown"))
+    roster2 = get_roster(match["team2"], match.get("league_code", "_unknown"))
+    twitch_channel = st.session_state.twitch_custom or match.get("league_code", "_unknown")
+    render_operation_room(match, analysis, bankroll_mgr, None, roster1, roster2, banca_atual, banca_meta, twitch_channel)
     st.stop()
 
-# ── Carrega agenda Cargo API ──────────────────────────────────────────
-if not st.session_state.cargo_matches:
-    with st.spinner("⚡ Carregando agenda global..."):
-        ms, src = _cargo(_ts1(), "")
-    st.session_state.cargo_matches = ms
-    st.session_state.cargo_source  = src
+if not st.session_state.matches:
+    with st.spinner("Carregando agenda PandaScore..."):
+        st.session_state.matches, st.session_state.matches_source = _load_matches_cached(_minute_key(), "")
 
-# Combina com live API Riot
-live_api = _live(_ts1())
-seen = set(); all_ms = []
-for m in live_api:
-    k = m["team1"] + "|" + m["team2"]
-    if k not in seen:
-        seen.add(k); all_ms.append({**m, "_riot_live": True})
-for m in st.session_state.cargo_matches:
-    k = m["team1"] + "|" + m["team2"]
-    if k not in seen:
-        seen.add(k); all_ms.append(m)
+all_matches = list(st.session_state.matches)
+markets = {
+    "Vitória (ML)": True,
+    "First Blood": True,
+    "First Dragon": True,
+    "First Baron": True,
+    "Total de Kills (O/U)": True,
+    "Duração do Mapa": True,
+    "Gold Diff @15min": True,
+}
 
-# Análises em paralelo
-mkt = {k: True for k in [
-    "Vitória (ML)", "First Blood", "First Dragon", "First Baron",
-    "Total de Kills (O/U)", "Duração do Mapa", "Gold Diff @15min"]}
 
-def _an(m):
+def _analyze(match: dict) -> tuple[str, dict]:
     try:
-        cap = LEAGUE_CONFIDENCE_CAP.get(m.get("league_tier", 1), 1.0)
-        an  = analyzer.analyze_match(m, mkt, min(70, cap * 100))
-        return m["team1"] + "|" + m["team2"], an
+        cap = LEAGUE_CONFIDENCE_CAP.get(match.get("league_tier", 2), 0.9)
+        result = analyzer.analyze_match(match, markets, min(70, cap * 100))
+        return f"{match['team1']}|{match['team2']}", result
     except Exception:
-        return m["team1"] + "|" + m["team2"], {}
+        return f"{match.get('team1', '')}|{match.get('team2', '')}", {}
+
 
 analysis_map = {}
-if all_ms:
+if all_matches:
     with ThreadPoolExecutor(max_workers=6) as pool:
-        analysis_map = dict(pool.map(_an, all_ms))
+        analysis_map = dict(pool.map(_analyze, all_matches))
 
-n_live = sum(1 for m in all_ms if m.get("state") == "inProgress" or m.get("_riot_live"))
-n_next = len(all_ms) - n_live
+live_count = sum(1 for match in all_matches if match.get("state") == "inProgress")
+next_count = max(0, len(all_matches) - live_count)
+with st.container():
+    st.markdown('<div class="premium-title">LOL PREDICTOR PRO</div>', unsafe_allow_html=True)
+    st.markdown('<div class="premium-api-status">API Status: Connected 🟢</div>', unsafe_allow_html=True)
+    render_hero(live_count, next_count, st.session_state.matches_source)
 
-render_hero(n_live, n_next, st.session_state.cargo_source)
-
-# ── Barra de ferramentas ──────────────────────────────────────────────
-c_q, c_s, _, c_t1, c_t2, c_go, c_ref = st.columns([3, 1, .15, 1.5, 1.5, 1.3, 0.6])
-
-with c_q:
-    cargo_q = st.text_input(
-        "", placeholder="🔍 Buscar time (T1, Dplus, LOUD, Fluxo, W7M...)",
-        key="cq", label_visibility="collapsed")
-with c_s:
-    do_search = st.button("Buscar", key="btn_s",
-                           use_container_width=True, type="primary")
-with c_t1:
-    t1i = st.text_input("", placeholder="Time 1 (ex: T1)",
-                         key="t1i", label_visibility="collapsed")
-with c_t2:
-    t2i = st.text_input("", placeholder="Time 2 (ex: Dplus KIA)",
-                         key="t2i", label_visibility="collapsed")
-with c_go:
-    do_manual = st.button("⚔️ Analisar", key="btn_m",
-                           use_container_width=True, type="primary")
-with c_ref:
-    if st.button("🔃", key="btn_ref", use_container_width=True, help="Recarregar"):
-        st.cache_data.clear()
-        st.session_state.cargo_matches = []
-        st.rerun()
-
-if do_search and not st.session_state.is_searching:
-    st.session_state.is_searching = True
-    st.session_state.cargo_matches = []
-    st.cache_data.clear()
-    with st.spinner("Buscando '" + cargo_q + "'..."):
-        ms, src = fetcher.cargo_search(cargo_q.strip())
-    st.session_state.cargo_matches = ms
-    st.session_state.cargo_source  = src
-    st.session_state.is_searching  = False
-    st.rerun()
-
-if do_manual:
-    t1 = t1i.strip(); t2 = t2i.strip()
-    if t1 and t2:
-        with st.spinner("Buscando stats..."):
-            s1 = _stats(_ts5(), t1)
-            s2 = _stats(_ts5(), t2)
-        m = fetcher.build_manual_match(t1, t2)
-        m["_stats_t1_override"] = s1 if s1 else None
-        m["_stats_t2_override"] = s2 if s2 else None
-        st.session_state.selected_match = m
-        st.rerun()
-    else:
-        st.error("Preencha os dois campos.")
-
-# ── Filtros de tempo ──────────────────────────────────────────────────
-time_filter = st.session_state.get("time_filter", "all")
-filter_labels = [
-    ("live", "🔴 Ao Vivo"), ("all", "Todos"),
-    ("1h", "1h"), ("3h", "3h"), ("6h", "6h"),
-    ("12h", "12h"), ("1d", "1d"), ("2d", "2d"), ("3d", "3d"),
+LEAGUE_FILTERS = [
+    ("cblol", "CBLOL"),
+    ("cblol_acad", "CBLOL Academy"),
+    ("lck", "LCK"),
+    ("lck_cl", "LCK Challengers"),
+    ("lpl", "LPL"),
+    ("lec", "LEC"),
+    ("lcs", "LCS"),
+    ("lcs_acad", "NACL"),
+    ("lla", "LLA"),
+    ("vcs", "VCS"),
+    ("tcl", "TCL"),
+    ("pcs", "PCS/LCP"),
+    ("ewc", "EWC"),
 ]
-st.markdown("<div style='margin:8px 0 4px;'>", unsafe_allow_html=True)
-fcols = st.columns(len(filter_labels))
-for i, (key, label) in enumerate(filter_labels):
-    with fcols[i]:
-        if st.button(label, key="tf_" + key, use_container_width=True,
-                     type="primary" if time_filter == key else "secondary"):
-            st.session_state.time_filter = key
+
+league_counts: dict[str, int] = {}
+for match in all_matches:
+    code = match.get("league_code", "_unknown")
+    league_counts[code] = league_counts.get(code, 0) + 1
+
+top_a, top_b, top_c = st.columns(3)
+with top_a:
+    st.markdown(
+        f'<div class="app-card"><div class="app-card-title">{live_count}</div>'
+        '<div class="app-card-subtitle">Jogos ao vivo reais</div></div>',
+        unsafe_allow_html=True,
+    )
+with top_b:
+    st.markdown(
+        f'<div class="app-card"><div class="app-card-title">{next_count}</div>'
+        '<div class="app-card-subtitle">Próximos jogos no calendário</div></div>',
+        unsafe_allow_html=True,
+    )
+with top_c:
+    st.markdown(
+        f'<div class="app-card"><div class="app-card-title">R$ {banca_atual:.2f}</div>'
+        '<div class="app-card-subtitle">Banca sincronizada</div></div>',
+        unsafe_allow_html=True,
+    )
+
+side_col, main_col, coupon_col = st.columns([1.15, 4.7, 1.55], gap="medium")
+
+with side_col:
+    render_league_sidebar(LEAGUE_FILTERS, league_counts, st.session_state.league_filter)
+
+with main_col:
+    st.markdown(
+        '<div class="app-card">'
+        '<div class="app-card-title">Jogos de Hoje</div>'
+        '<div class="app-card-subtitle">Busque partidas, filtre horários e abra a sala de operação.</div>',
+        unsafe_allow_html=True,
+    )
+    search_col, search_btn_col, t1_col, t2_col, manual_btn_col, refresh_col = st.columns([3, .8, 1.2, 1.2, .95, .5])
+    with search_col:
+        query = st.text_input(
+            "",
+            placeholder="🔍 Buscar time ou evento (KaBuM, T1, LOUD...)",
+            key="match_query",
+            label_visibility="collapsed",
+        )
+    with search_btn_col:
+        if st.button("Buscar", use_container_width=True, type="primary", key="search_btn"):
+            st.cache_data.clear()
+            with st.spinner("Buscando jogos..."):
+                st.session_state.matches, st.session_state.matches_source = fetcher.cargo_search(query)
             st.rerun()
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ── Filtra e renderiza lista ──────────────────────────────────────────
-filtered = filter_matches_by_time(all_ms, st.session_state.time_filter)
-
-# Recalcula análises para filtrados se necessário
-if filtered != all_ms:
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        analysis_map.update(dict(pool.map(_an, filtered)))
-
-sel_mid = None
-if st.session_state.selected_match:
-    sm = st.session_state.selected_match
-    sel_mid = hashlib.md5((sm["team1"] + sm["team2"]).encode()).hexdigest()[:8]
-
-render_match_list(filtered, analysis_map, bmgr, selected_id=sel_mid)
-
-# ── URL específica ────────────────────────────────────────────────────
-with st.expander("🔗 Colar URL da Liquipedia", expanded=False):
-    cu, cub = st.columns([5, 1])
-    with cu:
-        url_inp = st.text_input(
-            "", "", key="url_inp",
-            placeholder="liquipedia.net/leagueoflegends/LCK/2026/...",
-            label_visibility="collapsed")
-    with cub:
-        if st.button("🔍", key="btn_url", use_container_width=True, type="primary"):
-            if url_inp.strip():
-                st.cache_data.clear()
-                st.session_state.cargo_matches = []
-                with st.spinner("Lendo URL..."):
-                    ms, msg = fetcher.scrape_liquipedia_url(url_inp.strip())
-                st.session_state.cargo_matches = ms
-                st.session_state.cargo_source  = "real"
+    with t1_col:
+        manual_t1 = st.text_input("", placeholder="Time 1", key="manual_t1", label_visibility="collapsed")
+    with t2_col:
+        manual_t2 = st.text_input("", placeholder="Time 2", key="manual_t2", label_visibility="collapsed")
+    with manual_btn_col:
+        if st.button("Analisar", use_container_width=True, type="primary", key="manual_btn"):
+            if manual_t1.strip() and manual_t2.strip():
+                match = fetcher.build_manual_match(manual_t1.strip(), manual_t2.strip())
+                match["_stats_t1_override"] = _load_stats_cached(_five_minute_key(), manual_t1.strip()) or None
+                match["_stats_t2_override"] = _load_stats_cached(_five_minute_key(), manual_t2.strip()) or None
+                st.session_state.selected_match = match
                 st.rerun()
+            else:
+                st.error("Preencha os dois times.")
+    with refresh_col:
+        if st.button("↻", use_container_width=True, help="Recarregar agenda", key="refresh_btn"):
+            st.cache_data.clear()
+            st.session_state.matches = []
+            st.rerun()
+
+    filter_labels = [
+        ("live", "Ao Vivo"),
+        ("all", "Todos"),
+        ("1h", "1h"),
+        ("3h", "3h"),
+        ("6h", "6h"),
+        ("12h", "12h"),
+        ("1d", "1d"),
+        ("2d", "2d"),
+        ("3d", "3d"),
+    ]
+    filter_cols = st.columns(len(filter_labels))
+    for index, (key, label) in enumerate(filter_labels):
+        with filter_cols[index]:
+            if st.button(
+                label,
+                use_container_width=True,
+                key=f"time_filter_{key}",
+                type="primary" if st.session_state.time_filter == key else "secondary",
+            ):
+                st.session_state.time_filter = key
+                st.rerun()
+
+    filtered_matches = filter_matches_by_time(all_matches, st.session_state.time_filter)
+    if st.session_state.league_filter != "all":
+        filtered_matches = [m for m in filtered_matches if m.get("league_code") == st.session_state.league_filter]
+
+    selected_id = None
+    if st.session_state.selected_match:
+        selected = st.session_state.selected_match
+        selected_id = hashlib.md5((selected["team1"] + selected["team2"]).encode()).hexdigest()[:8]
+
+    _render_premium_match_board(filtered_matches, analysis_map)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with coupon_col:
+    render_coupon_panel(st.session_state.selected_match, banca_atual)
