@@ -45,6 +45,9 @@ class BankrollManager:
 
         Usa Kelly Fracionário (25%) para segurança.
         """
+        if self.bankroll <= 0:
+            return {"stake": 0.0, "stake_pct": 0.0, "ev": 0.0, "method": "kelly", "warning": "Banca zerada"}
+
         b = odds - 1
         p = probability
         q = 1 - p
@@ -129,6 +132,9 @@ class BankrollManager:
         )
 
         if expected_growth <= 0:
+            return 999
+
+        if self.bankroll <= 0:
             return 999
 
         multiplier = self.target / self.bankroll
