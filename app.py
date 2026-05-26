@@ -535,14 +535,20 @@ def _render_priority_strip(matches: list[dict]) -> None:
 def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dict[str, int], current: str, bankroll: float = 0.0) -> None:
     """Menu lateral compacto para não poluir a área de jogos."""
     total = sum(counts.values())
-    visible_leagues = [(code, label, counts.get(code, 0)) for code, label in leagues if counts.get(code, 0) > 0]
+    official_order = [("cblol", "🇧🇷 CBLOL"), ("lck", "🇰🇷 LCK"), ("lpl", "🇨🇳 LPL"), ("lec", "🇪🇺 LEC")]
+    official_codes = {code for code, _ in official_order}
+    visible_leagues = [
+        (code, label, counts.get(code, 0))
+        for code, label in leagues
+        if counts.get(code, 0) > 0 and code not in official_codes
+    ]
 
     with st.sidebar:
         st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
-        with st.expander("☰ Linhas / Ligas", expanded=False):
-            st.markdown('<div class="sidebar-league-title">Escolher linha</div>', unsafe_allow_html=True)
+        with st.expander("🏆 Ligas Oficiais", expanded=False):
+            st.markdown('<div class="sidebar-league-title">Ligas Oficiais</div>', unsafe_allow_html=True)
             if st.button(
-                f"Todos os jogos ({total})",
+                f"🌎 Todos ({total})",
                 key="hamburger_league_all",
                 use_container_width=True,
                 type="primary" if current == "all" else "secondary",
@@ -550,6 +556,20 @@ def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dic
                 st.session_state.league_filter = "all"
                 st.rerun()
 
+            for code, label in official_order:
+                count = counts.get(code, 0)
+                suffix = "jogo" if count == 1 else "jogos"
+                if st.button(
+                    f"{label} ({count} {suffix})",
+                    key=f"hamburger_official_{code}",
+                    use_container_width=True,
+                    type="primary" if current == code else "secondary",
+                ):
+                    st.session_state.league_filter = code
+                    st.rerun()
+
+        if visible_leagues:
+            st.markdown('<div class="sidebar-league-title">Outras linhas</div>', unsafe_allow_html=True)
             for code, label, count in visible_leagues:
                 suffix = "jogo" if count == 1 else "jogos"
                 if st.button(

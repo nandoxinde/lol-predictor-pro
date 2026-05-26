@@ -82,7 +82,12 @@ def _render_login():
         background:#050814!important;
         color:#EDE9FE!important;
         font-family:'Inter',sans-serif!important;
-        overflow-x:hidden!important;}
+        overflow:hidden!important;}
+    [data-testid="stAppViewContainer"]{
+        background:
+            linear-gradient(90deg,rgba(5,8,20,.92),rgba(5,8,20,.48),rgba(5,8,20,.92)),
+            linear-gradient(180deg,rgba(5,8,20,.28),rgba(5,8,20,.86)),
+            url("https://e1.pxfuel.com/desktop-wallpaper/853/468/desktop-wallpaper-4-summoner-s-rift-rifty.jpg") center center/cover fixed no-repeat!important;}
     [data-testid="stAppViewContainer"]::before{
         content:"";
         position:fixed;
@@ -90,100 +95,47 @@ def _render_login():
         z-index:0;
         pointer-events:none;
         background:
-            radial-gradient(circle at 50% 50%,rgba(21,101,192,.18),transparent 28%),
-            linear-gradient(90deg,rgba(5,8,20,.92) 0%,rgba(5,8,20,.42) 36%,rgba(5,8,20,.42) 64%,rgba(5,8,20,.92) 100%),
-            linear-gradient(180deg,rgba(5,8,20,.35) 0%,rgba(5,8,20,.88) 100%),
-            url("https://e1.pxfuel.com/desktop-wallpaper/853/468/desktop-wallpaper-4-summoner-s-rift-rifty.jpg");
-        background-size:cover;
-        background-position:center center;
-        background-repeat:no-repeat;
-        filter:saturate(1.08) contrast(1.08) brightness(.78);}
-    [data-testid="stAppViewContainer"]::after{
-        content:"";
-        position:fixed;
-        inset:0;
-        z-index:0;
-        pointer-events:none;
-        background:
-            radial-gradient(circle at 15% 12%,rgba(59,130,246,.20),transparent 24%),
-            radial-gradient(circle at 86% 12%,rgba(168,85,247,.22),transparent 24%),
-            linear-gradient(180deg,rgba(0,0,0,.12) 0%,rgba(0,0,0,.62) 100%);}
-    .stApp::before{
-        content:"";
-        position:fixed;
-        left:0;
-        top:0;
-        width:min(34vw,440px);
-        height:min(34vw,440px);
-        z-index:1;
-        pointer-events:none;
-        background:url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Mountain_Drake_Render.png") top left/contain no-repeat;
-        opacity:.82;
-        filter:drop-shadow(0 0 32px rgba(59,130,246,.32));}
+            radial-gradient(circle at 50% 48%,rgba(34,211,238,.16),transparent 24%),
+            linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.42));}
+    [data-testid="stAppViewContainer"]::after,
+    .stApp::before,
     .stApp::after{
-        content:"";
-        position:fixed;
-        right:0;
-        top:0;
-        width:min(35vw,460px);
-        height:min(35vw,460px);
-        z-index:1;
-        pointer-events:none;
-        background:url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Baron_Nashor_Render.png") top right/contain no-repeat;
-        opacity:.82;
-        filter:drop-shadow(0 0 34px rgba(168,85,247,.36));}
+        content:none!important;
+        display:none!important;}
     .main .block-container{
         min-height:100vh!important;
+        max-width:440px!important;
+        padding:0!important;
         position:relative!important;
         z-index:2!important;
-        max-width:430px!important;
-        padding:0!important;
         display:flex!important;
-        align-items:center!important;
-        justify-content:center!important;}
+        justify-content:center!important;
+        align-items:center!important;}
     section[data-testid="stSidebar"],footer,#MainMenu{display:none!important;}
     [data-testid="stForm"]{
-        position:relative;
-        width:390px;
+        width:400px;
         max-width:calc(100vw - 32px);
-        margin:0 auto;
-        background:
-            linear-gradient(180deg,rgba(18,24,38,.96),rgba(7,10,18,.98));
-        border:1px solid rgba(200,155,60,.72);
-        box-shadow:0 22px 70px rgba(0,0,0,.68),0 0 42px rgba(124,58,237,.22),inset 0 0 0 1px rgba(247,231,178,.08);
-        border-radius:10px;
-        padding:24px 24px 20px!important;
-        backdrop-filter:blur(8px);
-        clip-path:polygon(7% 0,93% 0,100% 12%,100% 88%,93% 100%,7% 100%,0 88%,0 12%);}
-    [data-testid="stForm"]::before{
-        content:"";
-        position:absolute;
-        inset:-10px;
-        z-index:-1;
-        border:1px solid rgba(200,155,60,.40);
-        clip-path:polygon(8% 0,92% 0,100% 12%,100% 88%,92% 100%,8% 100%,0 88%,0 12%);
-        box-shadow:0 0 30px rgba(200,155,60,.18);}
-    [data-testid="stForm"]::after{
-        content:"";
-        position:absolute;
-        left:-90px;
-        right:-90px;
-        top:48%;
-        z-index:-1;
-        height:1px;
-        background:linear-gradient(90deg,transparent,rgba(200,155,60,.55),transparent);
-        box-shadow:0 0 22px rgba(168,85,247,.42);}
+        margin:0 auto!important;
+        padding:28px 26px 22px!important;
+        background:rgba(9,14,25,.86)!important;
+        border:1px solid rgba(34,211,238,.46)!important;
+        border-radius:12px!important;
+        box-shadow:
+            0 26px 80px rgba(0,0,0,.70),
+            0 0 34px rgba(34,211,238,.22),
+            inset 0 0 0 1px rgba(148,163,184,.08)!important;
+        backdrop-filter:blur(12px)!important;}
     .login-title{
         text-align:center;
-        color:#F7E7B2;
+        color:#E0F2FE;
         font-size:18px;
         line-height:1.25;
         font-weight:900;
         letter-spacing:.2px;
-        text-shadow:0 0 18px rgba(200,155,60,.45);
-        margin:4px 0 18px;}
+        text-shadow:0 0 18px rgba(34,211,238,.36);
+        margin:4px 0 20px;}
     .login-owner-note{
-        color:#BDAE7F;
+        color:#8FA2BA;
         font-size:11px;
         line-height:1.55;
         text-align:center;
@@ -192,30 +144,26 @@ def _render_login():
         font-family:'Inter',sans-serif!important;
         font-weight:900!important;
         border-radius:10px!important;
-        border:1px solid rgba(216,180,254,.36)!important;
+        border:1px solid rgba(34,211,238,.46)!important;
         min-height:46px!important;
         transition:all .18s ease!important;}
     .stButton>button[kind="primary"]{
-        background:linear-gradient(135deg,#0E7490,#1D4ED8)!important;
+        background:linear-gradient(135deg,#0891B2,#1D4ED8)!important;
         color:#fff!important;
-        border-color:rgba(103,232,249,.55)!important;
-        box-shadow:0 0 28px rgba(34,211,238,.30)!important;}
+        box-shadow:0 0 28px rgba(34,211,238,.26)!important;}
     .stButton>button[kind="primary"]:hover{
         transform:translateY(-1px)!important;
-        box-shadow:0 0 42px rgba(34,211,238,.46)!important;}
+        box-shadow:0 0 40px rgba(34,211,238,.42)!important;}
     .stTextInput input{
-        background:rgba(10,12,24,.86)!important;
-        border:1px solid rgba(168,85,247,.34)!important;
-        color:#F5F3FF!important;
+        background:rgba(5,10,20,.82)!important;
+        border:1px solid rgba(34,211,238,.24)!important;
+        color:#F8FAFC!important;
         border-radius:10px!important;
         padding:11px 14px!important;
         font-size:15px!important;}
     .stTextInput input:focus{
-        border-color:#C084FC!important;
-        box-shadow:0 0 0 1px rgba(192,132,252,.35),0 0 20px rgba(124,58,237,.24)!important;}
-    @media(max-width:900px){
-        .stApp::before,.stApp::after{width:180px;height:180px;opacity:.42;}
-    }
+        border-color:#22D3EE!important;
+        box-shadow:0 0 0 1px rgba(34,211,238,.34),0 0 20px rgba(34,211,238,.20)!important;}
     </style>""", unsafe_allow_html=True)
 
     with st.form("login_form"):

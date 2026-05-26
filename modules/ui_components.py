@@ -129,42 +129,59 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
 footer,#MainMenu,[data-testid="stDecoration"],.stDeployButton{display:none!important;}
 section[data-testid="stSidebar"]{
     display:block!important;
-    width:260px!important;
-    min-width:260px!important;
-    max-width:260px!important;
+    width:74px!important;
+    min-width:74px!important;
+    max-width:74px!important;
     transform:none!important;
     visibility:visible!important;
-    background:#07111D!important;
-    border-right:1px solid #24344A!important;}
+    overflow:hidden!important;
+    background:rgba(7,17,29,.96)!important;
+    border-right:1px solid rgba(34,211,238,.28)!important;
+    box-shadow:8px 0 30px rgba(0,0,0,.32)!important;
+    transition:width .24s ease,max-width .24s ease,min-width .24s ease!important;}
+section[data-testid="stSidebar"]:hover{
+    width:270px!important;
+    min-width:270px!important;
+    max-width:270px!important;}
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{
     width:260px!important;
-    padding:18px 16px!important;
+    padding:16px 12px!important;
     overflow-x:hidden!important;}
 [data-testid="collapsedControl"],[data-testid="stSidebarCollapseButton"]{
     display:none!important;}
 section[data-testid="stSidebar"] .stButton>button{
-    width:100%!important;
+    width:236px!important;
     justify-content:flex-start!important;
     min-height:50px!important;
     border-radius:15px!important;
-    padding-left:15px!important;
+    padding-left:13px!important;
     margin:3px 0!important;
     font-size:14px!important;
     font-weight:800!important;
-    letter-spacing:.1px!important;}
+    letter-spacing:.1px!important;
+    white-space:nowrap!important;
+    overflow:hidden!important;
+    transition:all .20s ease!important;}
+section[data-testid="stSidebar"]:not(:hover) .stButton>button{
+    width:50px!important;
+    min-width:50px!important;
+    max-width:50px!important;
+    padding-left:12px!important;
+    padding-right:0!important;
+    letter-spacing:20px!important;}
 section[data-testid="stSidebar"] .stButton>button[kind="primary"]{
-    background:linear-gradient(90deg,rgba(249,115,22,.22),rgba(249,115,22,.10))!important;
-    color:#FF7A1A!important;
-    border:1px solid #B45309!important;
-    box-shadow:inset 0 0 0 1px rgba(255,122,26,.10)!important;}
+    background:linear-gradient(90deg,rgba(34,211,238,.20),rgba(29,78,216,.12))!important;
+    color:#67E8F9!important;
+    border:1px solid rgba(34,211,238,.54)!important;
+    box-shadow:inset 0 0 0 1px rgba(34,211,238,.10),0 0 18px rgba(34,211,238,.16)!important;}
 section[data-testid="stSidebar"] .stButton>button[kind="secondary"]{
     background:#0D1624!important;
     color:#9DB1C9!important;
     border:1px solid #1A2A40!important;}
 section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover{
     background:#121D2E!important;
-    color:#F2C7A8!important;
-    border-color:#8A3E12!important;}
+    color:#E0F2FE!important;
+    border-color:#22D3EE!important;}
 .sidebar-brand{
     display:flex;
     gap:12px;
@@ -179,6 +196,14 @@ section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover{
     color:#fff;font-size:20px;font-weight:900;}
 .sidebar-name{font-size:17px;font-weight:900;color:#fff;line-height:1.04;}
 .sidebar-sub{font-size:12px;font-weight:900;color:#FF7A1A;letter-spacing:1px;}
+section[data-testid="stSidebar"]:not(:hover) .sidebar-brand{
+    width:50px;gap:0;border-bottom-color:rgba(34,211,238,.18);}
+section[data-testid="stSidebar"]:not(:hover) .sidebar-name,
+section[data-testid="stSidebar"]:not(:hover) .sidebar-sub,
+section[data-testid="stSidebar"]:not(:hover) .sidebar-hint,
+section[data-testid="stSidebar"]:not(:hover) .sidebar-league-title{
+    opacity:0!important;
+    pointer-events:none!important;}
 .sidebar-hint{
     margin-top:18px;
     padding:14px 16px;
@@ -446,142 +471,13 @@ def filter_matches_by_time(matches: list, time_filter: str) -> list:
 # ─── Lista de partidas estilo BetBoom ─────────────────────────────────
 def render_match_list(matches: list, analysis_map: dict,
                        bankroll_mgr, selected_id=None):
-    from modules.data_fetcher import DataFetcher
-    import hashlib
+    """Legado desativado.
 
-    if not matches:
-        st.markdown(
-            '<div style="background:#0F1520;border:1px dashed #1E2D45;border-radius:8px;'
-            'padding:40px;text-align:center;margin:12px 0;">'
-            '<div style="font-size:32px;margin-bottom:8px;">📭</div>'
-            '<div style="font-size:13px;color:#1E2D45;">Nenhum jogo neste filtro.</div>'
-            '</div>', unsafe_allow_html=True)
-        return
-
-    # Agrupa por liga
-    by_league: dict = {}
-    for m in matches:
-        lg = m.get("league_display", m.get("league","Torneio"))
-        by_league.setdefault(lg, []).append(m)
-
-    tc = {"S":"#F59E0B","A":"#1A9FFF","B":"#3A4D65"}
-
-    for lg_display, lg_matches in by_league.items():
-        # Cabeçalho da liga
-        st.markdown(
-            f'<div style="background:#0D1520;border-left:3px solid #1565C0;'
-            f'padding:7px 14px;margin-bottom:2px;'
-            f'display:flex;justify-content:space-between;align-items:center;">'
-            f'<span style="font-size:13px;font-weight:700;color:#C8D4E8;">{lg_display}</span>'
-            f'<span style="font-size:11px;color:#3A4D65;">{len(lg_matches)} jogos</span>'
-            f'</div>', unsafe_allow_html=True)
-
-        for m in lg_matches:
-            t1 = m["team1"]; t2 = m["team2"]
-            t1t = DataFetcher.resolve_tier(t1)
-            t2t = DataFetcher.resolve_tier(t2)
-            time_label, time_color, is_live = _fmt_time(m)
-            bo  = m.get("best_of","3")
-            mid = hashlib.md5((t1+t2).encode()).hexdigest()[:8]
-
-            # Stats para odds
-            an  = analysis_map.get(f"{t1}|{t2}", {})
-            t1s = an.get("team1_stats", {})
-            t2s = an.get("team2_stats", {})
-            t1wr = t1s.get("winrate", 0.5); t2wr = t2s.get("winrate", 0.5)
-            tot  = t1wr + t2wr
-            o1   = round(tot / t1wr, 2) if t1wr > 0 else 2.00
-            o2   = round(tot / t2wr, 2) if t2wr > 0 else 2.00
-
-            # Cores do card
-            is_sel = (selected_id == mid)
-            bg  = "#141C2E" if is_sel else "#0F1520"
-            bdr = "#1565C0" if is_sel else "#1A2235"
-            accent = "#1565C0" if is_sel else ("#EF4444" if is_live else "#1A2235")
-
-            # Live dot animado
-            live_dot = (
-                '<span class="live-dot" style="display:inline-block;width:7px;height:7px;'
-                'background:#EF4444;border-radius:50%;margin-right:5px;"></span>'
-                if is_live else ""
-            )
-
-            # Logos
-            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32, m.get("team1_image",""))
-            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32, m.get("team2_image",""))
-
-            # Palpite principal (confiança)
-            dc = an.get("_dc")  # pré-calculado se disponível
-            pick_html = ""
-            preds = an.get("predictions",[])
-            if preds:
-                top = preds[0]
-                conf = top["confidence"]
-                cc   = "#22C55E" if conf>=80 else ("#F59E0B" if conf>=65 else "#EF4444")
-                pick_html = (
-                    f'<span style="font-size:10px;font-weight:700;color:{cc};'
-                    f'letter-spacing:.5px;">● {top.get("suggestion",top.get("market",""))[:30]}'
-                    f'  {conf:.0f}%</span>'
-                )
-
-            # HTML da linha completa
-            row = (
-                f'<div style="background:{bg};border:1px solid {bdr};border-left:3px solid {accent};'
-                f'border-radius:8px;margin-bottom:4px;padding:8px 10px;'
-                f'display:flex;align-items:center;gap:12px;box-shadow:0 6px 18px rgba(0,0,0,.18);">'
-
-                # Time 1
-                f'<div style="display:flex;align-items:center;gap:8px;flex:2.5;min-width:0;">'
-                + logo1 +
-                f'<div style="min-width:0;">'
-                f'<div style="font-size:13px;font-weight:800;color:#C8D4E8;'
-                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t1}</div>'
-                f'<div style="font-size:9px;color:#5A7090;text-transform:uppercase;">Nível {t1t}</div>'
-                f'</div></div>'
-
-                # Centro: horário + palpite
-                f'<div style="text-align:center;flex:2;min-width:90px;">'
-                f'{live_dot}'
-                f'<div style="font-size:12px;font-weight:900;color:{time_color};">{time_label}</div>'
-                f'<div style="font-size:9px;color:#5A7090;margin-top:1px;">Bo{bo}</div>'
-                f'{pick_html}'
-                f'</div>'
-
-                # Time 2
-                f'<div style="display:flex;align-items:center;gap:8px;'
-                f'flex:2.5;justify-content:flex-end;min-width:0;">'
-                f'<div style="text-align:right;min-width:0;">'
-                f'<div style="font-size:13px;font-weight:800;color:#C8D4E8;'
-                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{t2}</div>'
-                f'<div style="font-size:9px;color:#5A7090;text-transform:uppercase;">Nível {t2t}</div>'
-                f'</div>'
-                + logo2 +
-                f'</div>'
-
-                # Odds
-                f'<div style="display:flex;gap:4px;flex-shrink:0;">'
-                f'<div style="background:#121A2A;border:1px solid #1A2235;border-radius:6px;'
-                f'padding:6px 10px;text-align:center;min-width:52px;">'
-                f'<div style="font-size:9px;color:#5A7090;">1</div>'
-                f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o1:.2f}</div>'
-                f'</div>'
-                f'<div style="background:#121A2A;border:1px solid #1A2235;border-radius:6px;'
-                f'padding:6px 10px;text-align:center;min-width:52px;">'
-                f'<div style="font-size:9px;color:#5A7090;">2</div>'
-                f'<div style="font-size:14px;font-weight:800;color:#1A9FFF;">{o2:.2f}</div>'
-                f'</div>'
-                f'</div>'
-                f'</div>'
-            )
-            st.markdown(row, unsafe_allow_html=True)
-
-            _, action_col = st.columns([6, 1])
-            with action_col:
-                if st.button("Abrir", key=f"row_{mid}",
-                             use_container_width=True,
-                             type="primary" if is_sel else "secondary"):
-                    st.session_state.selected_match = m
-                    st.rerun()
+    O fluxo atual usa exclusivamente os cards premium definidos em
+    `app.py::_render_premium_match_board()` para evitar duplicidade visual.
+    A funcao permanece apenas para compatibilidade com imports antigos.
+    """
+    return None
 
 # ─── Sala de Operação ─────────────────────────────────────────────────
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
