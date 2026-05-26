@@ -60,7 +60,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "schedule-priority-v5"
+DATA_VERSION = "priority-strip-v6"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -281,6 +281,34 @@ def _apply_premium_frontend_css() -> None:
             border:1px solid rgba(200,155,60,.58) !important;
             box-shadow:0 12px 32px rgba(0,0,0,.42), inset 0 0 0 1px rgba(247,231,178,.06) !important;
         }
+        .priority-card {
+            background:linear-gradient(180deg, rgba(15,21,32,.96), rgba(8,12,20,.98));
+            border:1px solid rgba(200,155,60,.62);
+            border-radius:14px;
+            padding:10px 12px;
+            min-height:96px;
+            box-shadow:0 12px 30px rgba(0,0,0,.32);
+        }
+        .priority-league {
+            color:#F7E7B2;
+            font-size:11px;
+            font-weight:900;
+            letter-spacing:.7px;
+            text-transform:uppercase;
+        }
+        .priority-teams {
+            color:#F5F7FA;
+            font-size:13px;
+            font-weight:900;
+            line-height:1.25;
+            margin-top:5px;
+            min-height:34px;
+        }
+        .priority-meta {
+            color:#8FA2BA;
+            font-size:11px;
+            margin-top:5px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -426,6 +454,53 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
                 key = f"{match.get('team1', '')}|{match.get('team2', '')}"
                 with col:
                     _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+
+
+def _priority_sort_key(match: dict) -> tuple:
+    priority = {
+        "lpl": 0,
+        "cblol": 1,
+        "lck": 2,
+        "lck_cl": 3,
+        "ewc": 4,
+        "lec": 5,
+        "lcs": 6,
+        "tcl": 7,
+        "_unknown": 99,
+    }
+    return (priority.get(match.get("league_code", "_unknown"), 50), match.get("datetime", ""))
+
+
+def _render_priority_strip(matches: list[dict]) -> None:
+    if not matches:
+        return
+
+    ordered = sorted(matches, key=_priority_sort_key)
+    highlights = ordered[:4]
+    if not highlights:
+        return
+
+    st.markdown('<div class="premium-section-title">Destaques para operar</div>', unsafe_allow_html=True)
+    cols = st.columns(len(highlights))
+    for index, match in enumerate(highlights):
+        key_text = f"{match.get('team1', '')}|{match.get('team2', '')}|{match.get('datetime', '')}"
+        with cols[index]:
+            st.markdown(
+                f'<div class="priority-card">'
+                f'<div class="priority-league">{match.get("league_display", match.get("league", "LoL"))}</div>'
+                f'<div class="priority-teams">{match.get("team1", "Time 1")}<br>vs {match.get("team2", "Time 2")}</div>'
+                f'<div class="priority-meta">{match.get("datetime_brt", "--")} · {match.get("source", "Agenda")}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "Abrir",
+                key=f"priority_open_{index}_{hashlib.md5(key_text.encode()).hexdigest()[:8]}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state.selected_match = match
+                st.rerun()
 
 
 def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dict[str, int], current: str, bankroll: float = 0.0) -> None:
@@ -753,6 +828,7 @@ with main_col:
         '<div class="app-card-subtitle">Busque partidas, filtre horários e abra a sala de operação.</div>',
         unsafe_allow_html=True,
     )
+    _render_priority_strip(all_matches)
     search_col, search_btn_col, t1_col, t2_col, manual_btn_col, refresh_col = st.columns([3, .8, 1.2, 1.2, .95, .5])
     with search_col:
         query = st.text_input(

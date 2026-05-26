@@ -359,7 +359,7 @@ def render_hero(n_live: int, n_next: int, source: str = ""):
         f'rgba(3,7,18,.94) 0%,rgba(3,7,18,.42) 48%,rgba(3,7,18,.94) 100%),'
         f'linear-gradient(180deg,rgba(3,7,18,.10) 0%,rgba(3,7,18,.88) 100%),'
         f'url({_STADIUM}) center 42%/cover no-repeat;'
-        f'border-radius:14px;padding:28px 20px 18px;margin-bottom:12px;min-height:112px;'
+        f'border-radius:14px;padding:18px 18px 14px;margin-bottom:8px;min-height:82px;'
         f'border:1px solid rgba(200,155,60,.70);box-shadow:0 18px 42px rgba(0,0,0,.42),'
         f'inset 0 0 0 1px rgba(247,231,178,.08);overflow:hidden;">'
         f'<div style="font-size:24px;font-weight:900;color:#fff;'

@@ -93,6 +93,8 @@ def league_from_text(text: str) -> str:
         ("lck cl", "lck_cl"),
         ("lcs academy", "lcs_acad"),
         ("lcs acad", "lcs_acad"),
+        ("lplol", "_unknown"),
+        ("liga portuguesa", "_unknown"),
         ("cblol", "cblol"),
         ("lck", "lck"),
         ("lpl", "lpl"),
