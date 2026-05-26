@@ -16,6 +16,7 @@ import numpy as np
 import requests
 
 from modules.config import get_secret
+from modules.odds_fetcher import OddsPapiClient
 
 TZ_BRT = timezone(timedelta(hours=-3))
 PANDA_BASE = "https://api.pandascore.co"
@@ -240,7 +241,7 @@ def generate_analyst_comment(t1n, t1s, t1f, t2n, t2s, t2f, lc="", league_code=""
 
 
 class DataFetcher:
-    LQ_API = "https://liquipedia.net/leagueoflegends/api.php"
+    LQ_API = "https://lol.fandom.com/api.php"
     LQ_HEADERS = {"User-Agent": "LoLPredictorPro/2.0 (personal project)", "Accept-Encoding": "gzip"}
     LS_LIVE = "https://esports-api.lolesports.com/persisted/gw/getLive"
 
@@ -274,6 +275,8 @@ class DataFetcher:
         for match in self._fetch_lolesports_live():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_pandascore_upcoming():
+            self._append_unique(matches, seen, match, query_norm)
+        for match in self._fetch_oddspapi_schedule():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_liquipedia_schedule(query):
             self._append_unique(matches, seen, match, query_norm)
@@ -329,6 +332,56 @@ class DataFetcher:
             return parsed
         except Exception:
             return []
+
+    def _fetch_oddspapi_schedule(self) -> list[dict]:
+        client = OddsPapiClient()
+        if not client.configured:
+            return []
+
+        try:
+            fixtures = client.fetch_lol_fixtures("pinnacle")
+            if not any(league_from_text(fixture.get("tournamentName", "")) == "lpl" for fixture in fixtures):
+                fixtures.extend(client.fetch_lol_tournament_fixtures(["lpl"], days_ahead=5))
+        except Exception:
+            return []
+
+        matches: list[dict] = []
+        for fixture in fixtures:
+            t1 = fix_name(fixture.get("participant1Name") or fixture.get("participant1ShortName") or "")
+            t2 = fix_name(fixture.get("participant2Name") or fixture.get("participant2ShortName") or "")
+            dt = parse_to_brt(fixture.get("startTime"))
+            if not t1 or not t2 or not dt or t1.lower() == t2.lower():
+                continue
+
+            status_id = fixture.get("statusId")
+            state = "unstarted"
+            if status_id == 1:
+                elapsed = (now_brt() - dt).total_seconds() / 3600
+                if 0 <= elapsed <= 5:
+                    state = "inProgress"
+                else:
+                    continue
+            elif status_id in (2, 3):
+                continue
+
+            tournament = fixture.get("tournamentName") or fixture.get("categoryName") or "OddsPapi"
+            code = league_from_text(tournament)
+            if code == "_unknown":
+                code = guess_league(t1, t2)
+            matches.append(self._mk(
+                t1,
+                t2,
+                code,
+                get_league_info(code),
+                dt,
+                state,
+                tournament,
+                "3",
+                "",
+                "",
+                fixture.get("fixtureId"),
+            ))
+        return matches
 
     def _parse_pandascore(self, raw: dict, forced_state: str) -> dict | None:
         opponents = raw.get("opponents") or []

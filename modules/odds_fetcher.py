@@ -8,6 +8,7 @@ cannot be matched reliably, callers keep their existing estimated odds.
 from __future__ import annotations
 
 import re
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -24,6 +25,8 @@ ODDSPAPI_KEY = (
 )
 ODDSPAPI_BASE = "https://api.oddspapi.io/v4"
 LOL_SPORT_ID = 18
+_FIXTURES_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
+_TOURNAMENTS_CACHE: tuple[datetime, list[dict]] | None = None
 
 
 def _norm(value: str) -> str:
@@ -116,6 +119,73 @@ class OddsPapiClient:
                     "bookmaker": bookmaker,
                 }
         return result
+
+    def fetch_lol_fixtures(self, bookmaker: str = "pinnacle") -> list[dict]:
+        cached_at, fixtures = _FIXTURES_CACHE.get(bookmaker, (None, []))
+        if cached_at and (datetime.now(timezone.utc) - cached_at).total_seconds() < 240:
+            return fixtures
+
+        fixtures = self._fetch_lol_fixtures(bookmaker)
+        if fixtures:
+            _FIXTURES_CACHE[bookmaker] = (datetime.now(timezone.utc), fixtures)
+        return fixtures
+
+    def fetch_lol_tournament_fixtures(self, terms: list[str], days_ahead: int = 5) -> list[dict]:
+        tournaments = self._fetch_lol_tournaments()
+        if not tournaments:
+            return []
+
+        selected_ids: list[str] = []
+        normalized_terms = [_norm(term) for term in terms]
+        for tournament in tournaments:
+            tournament_id = tournament.get("tournamentId") or tournament.get("id")
+            if tournament_id is None:
+                continue
+            text = _norm(_flatten_text(tournament))
+            future_count = int(tournament.get("futureFixtures") or 0)
+            upcoming_count = int(tournament.get("upcomingFixtures") or 0)
+            if (future_count or upcoming_count) and any(term and term in text for term in normalized_terms):
+                selected_ids.append(str(tournament_id))
+
+        now = datetime.now(timezone.utc)
+        limit = now + timedelta(days=days_ahead)
+        fixtures: list[dict] = []
+        for tournament_id in selected_ids[:4]:
+            # OddsPapi documents a cooldown for fixture endpoints.
+            time.sleep(2.05)
+            payload = self._get_json(
+                "/fixtures",
+                {"tournamentId": tournament_id, "language": "en", "apiKey": self.api_key},
+                timeout=12,
+            )
+            if not isinstance(payload, list):
+                continue
+            for fixture in payload:
+                start_time = fixture.get("startTime")
+                try:
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00")).astimezone(timezone.utc)
+                except Exception:
+                    continue
+                if now - timedelta(hours=3) <= dt <= limit and fixture.get("statusId") in (0, 1):
+                    fixtures.append(fixture)
+        return fixtures
+
+    def _fetch_lol_tournaments(self) -> list[dict]:
+        global _TOURNAMENTS_CACHE
+        if _TOURNAMENTS_CACHE:
+            cached_at, tournaments = _TOURNAMENTS_CACHE
+            if (datetime.now(timezone.utc) - cached_at).total_seconds() < 900:
+                return tournaments
+
+        payload = self._get_json(
+            "/tournaments",
+            {"sportId": LOL_SPORT_ID, "language": "en", "apiKey": self.api_key},
+            timeout=12,
+        )
+        tournaments = payload if isinstance(payload, list) else []
+        if tournaments:
+            _TOURNAMENTS_CACHE = (datetime.now(timezone.utc), tournaments)
+        return tournaments
 
     def _fetch_lol_fixtures(self, bookmaker: str) -> list[dict]:
         now = datetime.now(timezone.utc)
