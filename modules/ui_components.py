@@ -14,7 +14,7 @@ def _now():
     return datetime.now(tz=TZ_BRT)
 
 # ─── Logo — escudo SVG puro (sem URLs externas que podem quebrar) ─────
-def _logo_html(team_name: str, tier_color: str, size: int = 32) -> str:
+def _logo_html(team_name: str, tier_color: str, size: int = 32, image_url: str = "") -> str:
     """
     Escudo circular com gradiente neon + inicial do time.
     Sem dependência de URL externa — nunca quebra.
@@ -26,7 +26,7 @@ def _logo_html(team_name: str, tier_color: str, size: int = 32) -> str:
     c1   = tier_color
     # Escurece o gradiente
     c2   = "#090C14"
-    return (
+    fallback = (
         f'<div style="width:{sz}px;height:{sz}px;border-radius:50%;'
         f'flex-shrink:0;overflow:hidden;'
         f'background:linear-gradient(135deg,{c1}55 0%,{c2} 100%);'
@@ -37,6 +37,18 @@ def _logo_html(team_name: str, tier_color: str, size: int = 32) -> str:
         f'text-shadow:0 0 8px {c1}99;'
         f'box-shadow:0 0 10px {c1}33 inset;">'
         f'{init}</div>'
+    )
+    if not image_url:
+        return fallback
+    return (
+        f'<div style="position:relative;width:{sz}px;height:{sz}px;flex-shrink:0;">'
+        f'<img src="{image_url}" loading="lazy" '
+        f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" '
+        f'style="width:{sz}px;height:{sz}px;border-radius:50%;object-fit:contain;display:block;" />'
+        f'<div style="display:none;width:{sz}px;height:{sz}px;border-radius:50%;'
+        f'background:linear-gradient(135deg,{c1}55 0%,{c2} 100%);border:1.5px solid {c1}88;'
+        f'align-items:center;justify-content:center;font-size:{fs}px;font-weight:900;color:{c1};">'
+        f'{init}</div></div>'
     )
 
 # ─── Tempo helpers ────────────────────────────────────────────────────
@@ -52,7 +64,7 @@ def _fmt_time(match: dict) -> tuple:
         dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
         diff = (dt - _now()).total_seconds()
         if diff <= 0:
-            return "🔴 AO VIVO", "#EF4444", True
+            return "Agora", "#F59E0B", False
         h = int(diff // 3600); m = int((diff % 3600) // 60)
         if diff <= 3600:
             return f"⏱ {h}h {m:02d}min" if h else f"⏱ {m}min", "#F59E0B", False
@@ -117,6 +129,8 @@ details summary{
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-track{background:#0B0D11;}
 ::-webkit-scrollbar-thumb{background:#1E2D45;border-radius:2px;}
+.twitch-sticky-shell{position:sticky;top:8px;z-index:10;}
+iframe[title="streamlit.components.v1.html"]{position:sticky!important;top:8px!important;z-index:10!important;}
 hr{border-color:#1A2235!important;margin:6px 0!important;}
 @keyframes live-pulse{0%,100%{opacity:1;}50%{opacity:.25;}}
 .live-dot{animation:live-pulse 1.2s ease infinite;}
@@ -182,7 +196,7 @@ _STADIUM = "https://wallpapercave.com/wp/wp9306424.jpg"
 
 def render_hero(n_live: int, n_next: int, source: str = ""):
     live_txt = f"🔴 {n_live} ao vivo  ·  " if n_live > 0 else ""
-    demo_txt = "  · ⚠️ Dados demo (Liquipedia bloqueou este servidor)" if source == "demo" else ""
+    demo_txt = "  · ⚠️ Dados demo (PandaScore indisponível)" if source == "demo" else ""
     st.markdown(
         f'<div style="background:linear-gradient(180deg,'
         f'rgba(11,13,17,.25) 0%,rgba(11,13,17,.82) 55%,rgba(11,13,17,1) 100%),'
@@ -192,7 +206,7 @@ def render_hero(n_live: int, n_next: int, source: str = ""):
         f'<div style="font-size:22px;font-weight:900;color:#fff;'
         f'text-shadow:0 2px 10px rgba(0,0,0,.9);">League of Legends</div>'
         f'<div style="font-size:11px;color:#4A6080;margin-top:4px;">'
-        f'{live_txt}📅 {n_next} próximos · Cargo API · cache 5min{demo_txt}</div>'
+        f'{live_txt}📅 {n_next} próximos · PandaScore API · cache 60s{demo_txt}</div>'
         f'</div>', unsafe_allow_html=True)
 
 # ─── Filtros de tempo ─────────────────────────────────────────────────
@@ -282,8 +296,8 @@ def render_match_list(matches: list, analysis_map: dict,
             )
 
             # Logos
-            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32)
-            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32)
+            logo1 = _logo_html(t1, tc.get(t1t,"#3A4D65"), 32, m.get("team1_image",""))
+            logo2 = _logo_html(t2, tc.get(t2t,"#3A4D65"), 32, m.get("team2_image",""))
 
             # Palpite principal (confiança)
             dc = an.get("_dc")  # pré-calculado se disponível
@@ -318,7 +332,7 @@ def render_match_list(matches: list, analysis_map: dict,
                 f'<div style="text-align:center;flex:2;min-width:90px;">'
                 f'{live_dot}'
                 f'<div style="font-size:13px;font-weight:800;color:{time_color};">{time_label}</div>'
-                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">BoBo{bo}</div>'
+                f'<div style="font-size:10px;color:#3A4D65;margin-top:1px;">Bo{bo}</div>'
                 f'{pick_html}'
                 f'</div>'
 
@@ -458,16 +472,25 @@ def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
         f'<span style="font-size:10px;color:#3A4D65;">{lg}</span></div>',
         unsafe_allow_html=True)
 
-    # Twitch Embed SDK — sem erro de parent
+    # Iframe direto: evita reinicialização do SDK e usa parent dinâmico do host atual.
     components.html(
-        f'<!DOCTYPE html><html><head>'
-        f'<script src="https://embed.twitch.tv/embed/v1.js"></script>'
-        f'<style>*{{margin:0;padding:0;}}body{{background:#000;overflow:hidden;}}'
-        f'#e{{width:100%;height:{height}px;}}</style></head>'
-        f'<body><div id="e"></div><script>'
-        f'new Twitch.Embed("e",{{width:"100%",height:{height},channel:"{ch}",'
-        f'layout:"video",autoplay:false,muted:true,theme:"dark"}});'
-        f'</script></body></html>',
+        f'''<!DOCTYPE html><html><head>
+        <style>
+        *{{margin:0;padding:0;box-sizing:border-box;}}
+        html,body{{background:#000;width:100%;height:100%;overflow:hidden;}}
+        iframe{{width:100%;height:{height}px;border:0;display:block;background:#000;}}
+        </style></head><body>
+        <div id="player"></div>
+        <script>
+        const parent = window.location.hostname || "localhost";
+        const channel = "{ch}";
+        const src = "https://player.twitch.tv/?channel=" + encodeURIComponent(channel)
+          + "&parent=" + encodeURIComponent(parent)
+          + "&parent=localhost&parent=127.0.0.1"
+          + "&autoplay=false&muted=false";
+        document.getElementById("player").innerHTML =
+          '<iframe src="' + src + '" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>';
+        </script></body></html>''',
         height=height+4, scrolling=False)
 
     st.markdown(

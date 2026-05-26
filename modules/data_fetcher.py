@@ -18,6 +18,39 @@ def minutes_until(dt_str):
     dt=parse_to_brt(dt_str)
     return None if dt is None else (dt-now_brt()).total_seconds()/60
 
+PANDA_TOKEN = "HA0qUDvZ17UqzeicwCYaH95T_OYBJkEBVUwdqn7sI41D1dyFASw"
+PANDA_BASE = "https://api.pandascore.co"
+PANDA_HEADERS = {"Authorization": f"Bearer {PANDA_TOKEN}"}
+
+_NAME_FIX = {
+    "equipe líquida": "Team Liquid",
+    "equipe liquid": "Team Liquid",
+    "100 ladrões": "100 Thieves",
+    "100 ladroes": "100 Thieves",
+    "nuvem 9": "Cloud9",
+    "equipe vitality": "Team Vitality",
+    "time vitality": "Team Vitality",
+    "voo de busca": "FlyQuest",
+}
+
+def _fix_name(name: str) -> str:
+    return _NAME_FIX.get((name or "").lower().strip(), name or "")
+
+def _league_from_name(name: str) -> str:
+    n = (name or "").lower()
+    mapping = [
+        ("lck challengers", "lck_cl"),
+        ("cblol academy", "cblol_acad"),
+        ("lck", "lck"), ("lpl", "lpl"), ("lec", "lec"),
+        ("lcs", "lcs"), ("cblol", "cblol"), ("lla", "lla"),
+        ("vcs", "vcs"), ("ljl", "ljl"), ("tcl", "tcl"),
+        ("pcs", "pcs"), ("ewc", "ewc"),
+    ]
+    for key, code in mapping:
+        if key in n:
+            return code
+    return "_unknown"
+
 # ── Canais de stream ──────────────────────────────────────────────────
 STREAM_CHANNELS = {
     "lck":"lck","lpl":"lpl","lec":"lec","lcs":"lcs","cblol":"cblol",
@@ -237,6 +270,10 @@ class DataFetcher:
         self.sess.mount("https://",requests.adapters.HTTPAdapter(
             max_retries=requests.adapters.Retry(total=2,backoff_factor=0.3)))
         self.sess.headers.update({"User-Agent":"LoLPredictorPro/2.0","x-api-key":self.LS_KEY,"Accept-Encoding":"gzip"})
+        self.panda=requests.Session()
+        self.panda.headers.update(PANDA_HEADERS)
+        self.panda.mount("https://",requests.adapters.HTTPAdapter(
+            max_retries=requests.adapters.Retry(total=2,backoff_factor=0.3)))
 
     @staticmethod
     def resolve_tier(name):
@@ -247,54 +284,88 @@ class DataFetcher:
         if any(t.lower() in nl or nl in t.lower() for t in TIER_A): return "A"
         return "B"
 
-    # ── CARGO API — -12h a +48h, sem filtro de liga ───────────────────
+    # ── PandaScore — running real + upcoming 48h ───────────────────────
     def cargo_search(self,query=""):
-        now=now_brt(); utc_now=datetime.now(timezone.utc)
-        dt_from=(utc_now-timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
-        dt_to  =(utc_now+timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
-        where="DateTime_UTC >= '"+dt_from+"' AND DateTime_UTC <= '"+dt_to+"'"
-        if query.strip():
-            q=query.strip().replace("'","''")
-            where+=" AND (Team1 LIKE '%"+q+"%' OR Team2 LIKE '%"+q+"%')"
-        params={"action":"cargoquery","tables":"MatchSchedule",
-                "fields":"Team1,Team2,DateTime_UTC,OverviewPage,BestOf",
-                "where":where,"order_by":"DateTime_UTC ASC","limit":"100","format":"json"}
+        q=(query or "").strip().lower()
         try:
-            r=requests.get(self.LQ_API,params=params,headers=self.LQ_HEADERS,timeout=15)
-            if r.status_code in(403,429):
-                return self._demo_matches(query),"demo"
-            if r.status_code!=200:
-                return self._demo_matches(query),"demo"
-            results=r.json().get("cargoquery",[])
-            if not results:
-                return self._demo_matches(query),"demo"
             matches=[]; seen=set()
-            for row in results:
-                try:
-                    f=row.get("title",row)
-                    t1=(f.get("Team1") or "").strip()
-                    t2=(f.get("Team2") or "").strip()
-                    dts=(f.get("DateTime UTC") or f.get("DateTime_UTC") or "").strip()
-                    ovp=(f.get("OverviewPage") or "").strip()
-                    bo=str(f.get("BestOf") or "3").strip()
-                    if not t1 or not t2 or t1==t2: continue
-                    pair=tuple(sorted([t1.lower(),t2.lower()]))
-                    if pair in seen: continue
-                    seen.add(pair)
-                    dt_brt=parse_to_brt(dts) or now
-                    mins=(dt_brt-now).total_seconds()/60
-                    # AO VIVO: até 45min após início
-                    state="inProgress" if -45<=mins<=5 else "unstarted"
-                    lc=self._ovp_to_league(ovp) or _guess_league(t1,t2)
-                    li=get_league_info(lc)
-                    if lc=="_unknown" and ovp:
-                        disp=ovp.split("/")[0].replace("_"," ")[:28]
-                        li={**li,"display":disp,"name":disp}
-                    matches.append(self._mk(t1,t2,lc,li,dt_brt,state,ovp,bo))
-                except: continue
-            if not matches: return self._demo_matches(query),"demo"
-            return matches,"real"
-        except: return self._demo_matches(query),"demo"
+
+            live=self.panda.get(f"{PANDA_BASE}/lol/matches/running",
+                                params={"page[size]":50},timeout=10)
+            if live.status_code==200:
+                for raw in live.json():
+                    m=self._parse_panda_match(raw, force_state="inProgress")
+                    if not m: continue
+                    key=m["team1"].lower()+"|"+m["team2"].lower()
+                    if key in seen: continue
+                    if q and q not in m["team1"].lower() and q not in m["team2"].lower(): continue
+                    seen.add(key); matches.append(m)
+
+            upcoming=self.panda.get(f"{PANDA_BASE}/lol/matches/upcoming",
+                                    params={"sort":"begin_at","page[size]":50},timeout=10)
+            if upcoming.status_code==200:
+                limit=datetime.now(timezone.utc)+timedelta(hours=48)
+                for raw in upcoming.json():
+                    begin=raw.get("begin_at") or ""
+                    dt_utc=None
+                    try:
+                        dt_utc=datetime.fromisoformat(begin.replace("Z","+00:00"))
+                    except Exception:
+                        pass
+                    if dt_utc and dt_utc>limit: continue
+                    m=self._parse_panda_match(raw, force_state="unstarted")
+                    if not m: continue
+                    key=m["team1"].lower()+"|"+m["team2"].lower()
+                    if key in seen: continue
+                    if q and q not in m["team1"].lower() and q not in m["team2"].lower(): continue
+                    seen.add(key); matches.append(m)
+
+            if matches:
+                return matches,"pandascore"
+            return self._demo_matches(query),"demo"
+        except Exception:
+            return self._demo_matches(query),"demo"
+
+    def _parse_panda_match(self, raw, force_state="unstarted"):
+        try:
+            opponents=raw.get("opponents",[])
+            if len(opponents)<2: return None
+            o1=opponents[0].get("opponent",{}) or {}
+            o2=opponents[1].get("opponent",{}) or {}
+            t1=_fix_name(o1.get("name","").strip())
+            t2=_fix_name(o2.get("name","").strip())
+            if not t1 or not t2 or t1==t2: return None
+
+            begin=raw.get("begin_at") or ""
+            dt_brt=parse_to_brt(begin) or now_brt()
+            status=raw.get("status","")
+            actual_state="unstarted"
+            if status=="running" or force_state=="inProgress":
+                if begin:
+                    start_utc=datetime.fromisoformat(begin.replace("Z","+00:00"))
+                    elapsed=(datetime.now(timezone.utc)-start_utc).total_seconds()/3600
+                    actual_state="inProgress" if 0 <= elapsed <= 5 else "finished"
+                else:
+                    actual_state="inProgress"
+            elif status in ("not_started","postponed") or force_state=="unstarted":
+                actual_state="unstarted"
+            elif status in ("finished","canceled"):
+                actual_state="finished"
+            if actual_state=="finished": return None
+
+            league=raw.get("league",{}) or {}
+            serie=raw.get("serie",{}) or {}
+            lc=_league_from_name((league.get("name","")+" "+serie.get("full_name","")).strip())
+            if lc=="_unknown":
+                lc=_guess_league(t1,t2)
+            li=get_league_info(lc)
+            return self._mk(
+                t1,t2,lc,li,dt_brt,actual_state,
+                league.get("name",""),str(raw.get("number_of_games") or "3"),
+                o1.get("image_url",""),o2.get("image_url",""),
+                raw.get("id"))
+        except Exception:
+            return None
 
     def _ovp_to_league(self,ovp):
         if not ovp: return "_unknown"
@@ -310,17 +381,17 @@ class DataFetcher:
             if any(k in o for k in kws): return c
         return "_unknown"
 
-    def _mk(self,t1,t2,lc,li,dt_brt,state,ovp="",best_of="3"):
+    def _mk(self,t1,t2,lc,li,dt_brt,state,ovp="",best_of="3",team1_image="",team2_image="",panda_id=None):
         return {
             "league":li.get("name","Torneio"),"league_display":li.get("display","Torneio"),
             "league_code":lc,"league_tier":li.get("tier",2),"is_main_league":li.get("main",True),
-            "datetime":dt_brt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "datetime":dt_brt.astimezone(timezone.utc).isoformat().replace("+00:00","Z"),
             "datetime_brt":dt_brt.strftime("%d/%m %H:%M"),
             "datetime_obj":dt_brt,
             "team1":t1,"team2":t2,"team1_code":t1[:4].upper(),"team2_code":t2[:4].upper(),
-            "team1_image":"","team2_image":"","state":state,
+            "team1_image":team1_image or "","team2_image":team2_image or "","state":state,
             "blockName":ovp,"tournament":ovp,"best_of":str(best_of),
-            "is_manual":False,"is_demo":False,
+            "panda_id":panda_id,"is_manual":False,"is_demo":False,
         }
 
     # ── DEMO DATA — horários calculados em tempo real ─────────────────
@@ -337,13 +408,7 @@ class DataFetcher:
             """Datetime relativo a agora."""
             return now + _td(hours=h, minutes=m)
 
-        # Estado "inProgress" só se o jogo começou há menos de 45min
-        def state(h: float) -> str:
-            return "inProgress" if -0.75 <= h <= 0.08 else "unstarted"
-
         raw = [
-            # AO VIVO: começou há 20min
-            ("T1 Esports",          "Nongshim RedForce",   "lck",     t(-0.33), "3"),
             # Próxima hora
             ("BNK FearX",           "KT Rolster",          "lck",     t(0.5),   "3"),
             ("JDG",                 "BLG",                 "lpl",     t(0.75),  "3"),
@@ -382,10 +447,8 @@ class DataFetcher:
         matches = []
         for t1, t2, lc, dt_brt, bo in raw:
             li  = get_league_info(lc)
-            # Determina estado baseado no offset em horas
-            offset_h = (dt_brt - now).total_seconds() / 3600
-            st = "inProgress" if -0.75 <= offset_h <= 0.08 else "unstarted"
-            matches.append(self._mk(t1, t2, lc, li, dt_brt, st, "", bo))
+            # Fallback demo nunca inventa jogo AO VIVO.
+            matches.append(self._mk(t1, t2, lc, li, dt_brt, "unstarted", "", bo))
 
         # Filtra por query
         if query.strip():
@@ -402,20 +465,9 @@ class DataFetcher:
 
     # ── Utilitários ───────────────────────────────────────────────────
     def _fetch_all_live(self):
-        try:
-            r=self.sess.get(self.LS_LIVE,params={"hl":"pt-BR"},timeout=8)
-            if r.status_code!=200: return []
-            events=r.json().get("data",{}).get("schedule",{}).get("events",[])
-            results=[]
-            for ev in events:
-                if ev.get("type")!="match": continue
-                teams=ev.get("match",{}).get("teams",[{},{}])
-                if len(teams)<2: continue
-                ln=ev.get("league",{}).get("name","")
-                lc=self._name_to_code(ln); li=get_league_info(lc)
-                results.append(self._bfe(ev,teams,li,lc,"inProgress"))
-            return results
-        except: return []
+        # PandaScore /lol/matches/running é a única fonte usada para AO VIVO.
+        # A API pública da Riot/LoLEsports já retornou eventos ambíguos aqui.
+        return []
 
     def build_manual_match(self,t1,t2):
         t1=t1.strip(); t2=t2.strip()
