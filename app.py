@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
@@ -59,6 +60,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
+DATA_VERSION = "schedule-priority-v5"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -69,6 +71,13 @@ if "state_initialized" not in st.session_state:
 
 for key, value in DEFAULT_STATE.items():
     st.session_state.setdefault(key, value)
+
+if st.session_state.get("data_version") != DATA_VERSION:
+    st.cache_data.clear()
+    st.session_state.matches = []
+    st.session_state.matches_source = ""
+    st.session_state.selected_match = None
+    st.session_state.data_version = DATA_VERSION
 
 HISTORY_FILE = "data/bet_history.json"
 
@@ -365,12 +374,28 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
                 st.rerun()
         with odd_col2:
             st.markdown(f'<div class="premium-odd">2&nbsp;&nbsp;{odd2:.2f}</div>', unsafe_allow_html=True)
-        st.caption(f"Odds: {odds_source}")
+        st.caption(f"Fonte: {match.get('source', 'Agenda')} · Odds: {odds_source}")
 
 
 def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
+    priority = {
+        "lpl": 0,
+        "cblol": 1,
+        "lck": 2,
+        "lck_cl": 3,
+        "lec": 4,
+        "lcs": 5,
+        "ewc": 6,
+        "tcl": 7,
+        "vcs": 8,
+        "pcs": 9,
+        "_unknown": 99,
+    }
     live_matches = [match for match in matches if match.get("state") == "inProgress"]
-    upcoming_matches = [match for match in matches if match.get("state") != "inProgress"]
+    upcoming_matches = sorted(
+        [match for match in matches if match.get("state") != "inProgress"],
+        key=lambda item: (priority.get(item.get("league_code", "_unknown"), 50), item.get("datetime", "")),
+    )
     ordered = live_matches + upcoming_matches
 
     if not ordered:
@@ -379,19 +404,25 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
 
     if live_matches:
         st.markdown('<div class="premium-section-title">Partidas Ao Vivo</div>', unsafe_allow_html=True)
-        for index, match in enumerate(live_matches):
+        for index, match in enumerate(live_matches[:8]):
             key = f"{match.get('team1', '')}|{match.get('team2', '')}"
             _render_premium_match_card(match, analysis_map.get(key, {}), f"live_{index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
 
     if upcoming_matches:
         st.markdown('<div class="premium-section-title">Próximos Jogos</div>', unsafe_allow_html=True)
-        for row_start in range(0, len(upcoming_matches), 2):
+        visible_upcoming = upcoming_matches[:24]
+        if len(upcoming_matches) > len(visible_upcoming):
+            st.caption(
+                f"Mostrando {len(visible_upcoming)} de {len(upcoming_matches)} jogos. "
+                "Use o menu Linhas/Ligas para focar em LPL, CBLOL, LCK ou outra liga."
+            )
+        for row_start in range(0, len(visible_upcoming), 2):
             cols = st.columns(2)
             for offset, col in enumerate(cols):
                 item_index = row_start + offset
-                if item_index >= len(upcoming_matches):
+                if item_index >= len(visible_upcoming):
                     continue
-                match = upcoming_matches[item_index]
+                match = visible_upcoming[item_index]
                 key = f"{match.get('team1', '')}|{match.get('team2', '')}"
                 with col:
                     _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
@@ -590,6 +621,9 @@ if oddspapi_odds:
         else:
             enriched_matches.append(match)
     all_matches = enriched_matches
+
+source_counts = Counter(match.get("source", "Agenda") for match in all_matches)
+source_summary = " + ".join(f"{source} ({count})" for source, count in source_counts.most_common())
 markets = {
     "Vitória (ML)": True,
     "First Blood": True,
@@ -620,8 +654,8 @@ next_count = max(0, len(all_matches) - live_count)
 with st.container():
     st.markdown('<div class="premium-title">LOL PREDICTOR PRO</div>', unsafe_allow_html=True)
     odds_status = "OddsPapi conectado 🟢" if oddspapi_odds else "OddsPapi sem odds para estes jogos 🟡"
-    st.markdown(f'<div class="premium-api-status">PandaScore conectado 🟢 · {odds_status}</div>', unsafe_allow_html=True)
-    render_hero(live_count, next_count, st.session_state.matches_source)
+    st.markdown(f'<div class="premium-api-status">Agenda: {source_summary or st.session_state.matches_source} · {odds_status}</div>', unsafe_allow_html=True)
+    render_hero(live_count, next_count, source_summary or st.session_state.matches_source)
 
 LEAGUE_FILTERS = [
     ("cblol", "CBLOL"),

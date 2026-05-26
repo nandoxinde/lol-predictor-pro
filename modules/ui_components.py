@@ -353,6 +353,7 @@ _STADIUM = "https://cdnb.artstation.com/p/assets/images/images/059/542/327/large
 def render_hero(n_live: int, n_next: int, source: str = ""):
     live_txt = f"🔴 {n_live} ao vivo  ·  " if n_live > 0 else ""
     demo_txt = "  · ⚠️ Dados demo (PandaScore indisponível)" if source == "demo" else ""
+    source_label = "Agenda demo" if source == "demo" else (source or "Agenda real")
     st.markdown(
         f'<div style="background:linear-gradient(90deg,'
         f'rgba(3,7,18,.94) 0%,rgba(3,7,18,.42) 48%,rgba(3,7,18,.94) 100%),'
@@ -364,7 +365,7 @@ def render_hero(n_live: int, n_next: int, source: str = ""):
         f'<div style="font-size:24px;font-weight:900;color:#fff;'
         f'text-shadow:0 2px 10px rgba(0,0,0,.9);">League of Legends</div>'
         f'<div style="font-size:11px;color:#A89B73;margin-top:6px;">'
-        f'{live_txt}📅 {n_next} próximos · PandaScore API · cache 60s{demo_txt}</div>'
+        f'{live_txt}📅 {n_next} próximos · {source_label} · cache 60s{demo_txt}</div>'
         f'</div>', unsafe_allow_html=True)
 
 def render_league_sidebar(leagues: list, counts: dict, current: str):

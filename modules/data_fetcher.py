@@ -380,6 +380,7 @@ class DataFetcher:
                 "",
                 "",
                 fixture.get("fixtureId"),
+                "OddsPapi",
             ))
         return matches
 
@@ -425,6 +426,7 @@ class DataFetcher:
             o1.get("image_url", ""),
             o2.get("image_url", ""),
             raw.get("id"),
+            "PandaScore",
         )
 
     def _fetch_lolesports_live(self) -> list[dict]:
@@ -465,6 +467,7 @@ class DataFetcher:
                     teams[0].get("image", ""),
                     teams[1].get("image", ""),
                     event.get("id"),
+                    "LoLEsports",
                 ))
             return parsed
         except Exception:
@@ -504,7 +507,17 @@ class DataFetcher:
                 code = league_from_text(overview)
                 if code == "_unknown":
                     code = guess_league(t1, t2)
-                matches.append(self._mk(t1, t2, code, get_league_info(code), dt, "unstarted", overview, data.get("BestOf") or "3"))
+                matches.append(self._mk(
+                    t1,
+                    t2,
+                    code,
+                    get_league_info(code),
+                    dt,
+                    "unstarted",
+                    overview,
+                    data.get("BestOf") or "3",
+                    source="Leaguepedia",
+                ))
             return matches
         except Exception:
             return []
@@ -522,12 +535,15 @@ class DataFetcher:
             ("RED Canids", "Fluxo W7M", "cblol", 30.0),
         ]
         matches = [
-            self._mk(t1, t2, code, get_league_info(code), base + timedelta(hours=hours), "unstarted", "", "3")
+            self._mk(t1, t2, code, get_league_info(code), base + timedelta(hours=hours), "unstarted", "", "3", source="Demo")
             for t1, t2, code, hours in rows
         ]
         if query.strip():
             q = query.strip().lower()
             matches = [m for m in matches if q in m["team1"].lower() or q in m["team2"].lower()]
+        for match in matches:
+            match["source"] = "Demo"
+            match["is_demo"] = True
         return matches
 
     def _mk(
@@ -543,6 +559,7 @@ class DataFetcher:
         team1_image: str = "",
         team2_image: str = "",
         panda_id=None,
+        source: str = "Sistema",
     ) -> dict:
         dt = dt.astimezone(TZ_BRT)
         return {
@@ -565,6 +582,7 @@ class DataFetcher:
             "tournament": tournament,
             "best_of": str(best_of),
             "panda_id": panda_id,
+            "source": source,
             "is_manual": False,
             "is_demo": False,
         }
