@@ -78,26 +78,26 @@ def _render_login():
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
     html,body,.stApp,[data-testid="stAppViewContainer"]{
-        background:#06030D!important;
+        min-height:100vh!important;
+        background:#050814!important;
         color:#EDE9FE!important;
         font-family:'Inter',sans-serif!important;
         overflow-x:hidden!important;}
     [data-testid="stAppViewContainer"]::before{
         content:"";
         position:fixed;
-        inset:-4%;
+        inset:0;
         z-index:0;
         pointer-events:none;
         background:
-            radial-gradient(circle at 50% 34%,rgba(216,180,254,.22),transparent 22%),
-            linear-gradient(90deg,rgba(5,3,13,.98) 0%,rgba(16,8,31,.28) 42%,rgba(5,3,13,.96) 100%),
-            linear-gradient(180deg,rgba(5,3,13,.10) 0%,rgba(5,3,13,.70) 72%,#05030D 100%),
-            url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Baron_Nashor_Splash_concept_01.jpg");
+            radial-gradient(circle at 50% 50%,rgba(21,101,192,.18),transparent 28%),
+            linear-gradient(90deg,rgba(5,8,20,.92) 0%,rgba(5,8,20,.42) 36%,rgba(5,8,20,.42) 64%,rgba(5,8,20,.92) 100%),
+            linear-gradient(180deg,rgba(5,8,20,.35) 0%,rgba(5,8,20,.88) 100%),
+            url("https://e1.pxfuel.com/desktop-wallpaper/853/468/desktop-wallpaper-4-summoner-s-rift-rifty.jpg");
         background-size:cover;
-        background-position:center 34%;
+        background-position:center center;
         background-repeat:no-repeat;
-        filter:saturate(1.18) contrast(1.12) brightness(.86);
-        animation:baronBreath 14s ease-in-out infinite alternate;}
+        filter:saturate(1.08) contrast(1.08) brightness(.78);}
     [data-testid="stAppViewContainer"]::after{
         content:"";
         position:fixed;
@@ -105,69 +105,54 @@ def _render_login():
         z-index:0;
         pointer-events:none;
         background:
-            radial-gradient(circle at 50% 30%,rgba(216,180,254,.16),transparent 16%),
-            radial-gradient(circle at 34% 58%,rgba(124,58,237,.14),transparent 24%),
-            linear-gradient(180deg,transparent 0%,rgba(8,4,18,.72) 100%);
-        animation:voidMist 9s ease-in-out infinite alternate;}
+            radial-gradient(circle at 15% 12%,rgba(59,130,246,.20),transparent 24%),
+            radial-gradient(circle at 86% 12%,rgba(168,85,247,.22),transparent 24%),
+            linear-gradient(180deg,rgba(0,0,0,.12) 0%,rgba(0,0,0,.62) 100%);}
+    .stApp::before{
+        content:"";
+        position:fixed;
+        left:0;
+        top:0;
+        width:min(34vw,440px);
+        height:min(34vw,440px);
+        z-index:1;
+        pointer-events:none;
+        background:url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Mountain_Drake_Render.png") top left/contain no-repeat;
+        opacity:.82;
+        filter:drop-shadow(0 0 32px rgba(59,130,246,.32));}
+    .stApp::after{
+        content:"";
+        position:fixed;
+        right:0;
+        top:0;
+        width:min(35vw,460px);
+        height:min(35vw,460px);
+        z-index:1;
+        pointer-events:none;
+        background:url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Baron_Nashor_Render.png") top right/contain no-repeat;
+        opacity:.82;
+        filter:drop-shadow(0 0 34px rgba(168,85,247,.36));}
     .main .block-container{
+        min-height:100vh!important;
         position:relative!important;
-        z-index:1!important;
-        padding-top:34px!important;
-        max-width:1040px!important;}
+        z-index:2!important;
+        max-width:430px!important;
+        padding:0!important;
+        display:flex!important;
+        align-items:center!important;
+        justify-content:center!important;}
     section[data-testid="stSidebar"],footer,#MainMenu{display:none!important;}
-    .baron-hero{
-        text-align:center;
-        padding:0 0 10px;
-        position:relative;}
-    .baron-mark{
-        width:84px;height:84px;margin:0 auto 8px;
-        border-radius:18px;
-        background:
-            linear-gradient(135deg,rgba(216,180,254,.18),rgba(15,23,42,.88)),
-            radial-gradient(circle at 50% 35%,rgba(250,245,255,.60),rgba(168,85,247,.22) 36%,transparent 72%);
-        border:1px solid rgba(200,155,60,.58);
-        box-shadow:0 0 28px rgba(168,85,247,.48),inset 0 0 20px rgba(250,245,255,.10);
-        display:flex;align-items:center;justify-content:center;
-        transform:rotate(45deg);
-        animation:baronPulse 2.8s ease-in-out infinite;}
-    .baron-mark span{
-        font-size:42px;
-        filter:drop-shadow(0 0 16px rgba(216,180,254,.85));
-        transform:rotate(-45deg) translateY(-1px);}
-    .baron-title{
-        font-size:18px;
-        line-height:1;
-        font-weight:900;
-        color:#F7E7B2;
-        letter-spacing:-.8px;
-        text-shadow:0 0 18px rgba(200,155,60,.45),0 2px 0 #05030D;}
-    .baron-title b{color:#C084FC;}
-    .baron-badge{
-        background:linear-gradient(135deg,#7C3AED,#2563EB);
-        color:#fff;
-        font-size:10px;
-        font-weight:900;
-        padding:2px 6px;
-        border-radius:5px;
-        margin-left:6px;
-        vertical-align:middle;}
-    .baron-subtitle{
-        color:#BDAE7F;
-        font-size:10px;
-        font-weight:800;
-        letter-spacing:1.8px;
-        margin-top:8px;
-        text-transform:uppercase;}
     [data-testid="stForm"]{
         position:relative;
-        max-width:360px;
+        width:390px;
+        max-width:calc(100vw - 32px);
         margin:0 auto;
         background:
-            linear-gradient(180deg,rgba(27,31,43,.94),rgba(8,10,18,.96));
+            linear-gradient(180deg,rgba(18,24,38,.96),rgba(7,10,18,.98));
         border:1px solid rgba(200,155,60,.72);
         box-shadow:0 22px 70px rgba(0,0,0,.68),0 0 42px rgba(124,58,237,.22),inset 0 0 0 1px rgba(247,231,178,.08);
         border-radius:10px;
-        padding:20px 22px 16px!important;
+        padding:24px 24px 20px!important;
         backdrop-filter:blur(8px);
         clip-path:polygon(7% 0,93% 0,100% 12%,100% 88%,93% 100%,7% 100%,0 88%,0 12%);}
     [data-testid="stForm"]::before{
@@ -188,6 +173,21 @@ def _render_login():
         height:1px;
         background:linear-gradient(90deg,transparent,rgba(200,155,60,.55),transparent);
         box-shadow:0 0 22px rgba(168,85,247,.42);}
+    .login-title{
+        text-align:center;
+        color:#F7E7B2;
+        font-size:18px;
+        line-height:1.25;
+        font-weight:900;
+        letter-spacing:.2px;
+        text-shadow:0 0 18px rgba(200,155,60,.45);
+        margin:4px 0 18px;}
+    .login-owner-note{
+        color:#BDAE7F;
+        font-size:11px;
+        line-height:1.55;
+        text-align:center;
+        margin-top:12px;}
     .stButton>button{
         font-family:'Inter',sans-serif!important;
         font-weight:900!important;
@@ -213,89 +213,74 @@ def _render_login():
     .stTextInput input:focus{
         border-color:#C084FC!important;
         box-shadow:0 0 0 1px rgba(192,132,252,.35),0 0 20px rgba(124,58,237,.24)!important;}
-    @keyframes baronBreath{
-        0%{transform:scale(1.00) translate3d(0,0,0);background-position:center 34%;}
-        100%{transform:scale(1.055) translate3d(-12px,-10px,0);background-position:center 29%;}}
-    @keyframes voidMist{
-        0%{opacity:.56;transform:translateX(-16px);}
-        100%{opacity:.86;transform:translateX(18px);}}
-    @keyframes baronPulse{
-        0%,100%{transform:scale(1);box-shadow:0 0 34px rgba(168,85,247,.62),inset 0 0 22px rgba(250,245,255,.18);}
-        50%{transform:scale(1.045);box-shadow:0 0 58px rgba(216,180,254,.78),inset 0 0 30px rgba(250,245,255,.28);}}
+    @media(max-width:900px){
+        .stApp::before,.stApp::after{width:180px;height:180px;opacity:.42;}
+    }
     </style>""", unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, .92, 1])
-    with col:
-        st.markdown("""
-        <div class="baron-hero">
-          <div class="baron-mark"><span>♛</span></div>
-          <div class="baron-title">Lol Predictor<b> Pro</b><span class="baron-badge">v2.0</span></div>
-          <div class="baron-subtitle">Log in to your account</div>
-        </div>""", unsafe_allow_html=True)
-
-        with st.form("login_form"):
-            username = st.text_input("👤 Usuário",
-                placeholder="Fernando ou convidado",
-                key="login_user")
-            password = st.text_input("🔑 Senha",
-                type="password",
-                placeholder="Digite sua senha...",
-                key="login_pass")
-            submitted = st.form_submit_button(
-                "ENTRAR →", use_container_width=True, type="primary")
-
-            if submitted:
-                u = username.strip().lower()
-                p = password.strip()
-
-                # Verifica dono
-                owner_hash = OWNER_PASSWORD_HASH or profile.get("password_hash", "")
-                owner_ok = (
-                    u == profile["username"].lower() and
-                    bool(owner_hash) and
-                    _hash(p) == owner_hash
-                )
-                # Verifica convidado
-                guest_ok = (
-                    u == GUEST_USERNAME and
-                    bool(GUEST_PASSWORD_HASH) and
-                    _hash(p) == GUEST_PASSWORD_HASH
-                )
-
-                if owner_ok:
-                    st.session_state.authenticated    = True
-                    st.session_state.role             = "owner"
-                    st.session_state.profile          = profile
-                    st.session_state.banca_ini        = float(profile["banca_ini"])
-                    st.session_state.banca_meta       = float(profile["banca_meta"])
-                    st.session_state.banca_atual_sync = float(profile["banca_atual"])
-                    st.success("✅ Bem-vindo, " + profile["display_name"] + "!")
-                    st.rerun()
-
-                elif guest_ok:
-                    st.session_state.authenticated    = True
-                    st.session_state.role             = "guest"
-                    st.session_state.profile          = {"display_name": "Convidado"}
-                    st.session_state.banca_ini        = 0.0
-                    st.session_state.banca_meta       = 1000.0
-                    st.session_state.banca_atual_sync = 0.0
-                    st.success("✅ Bem-vindo, Convidado! Acesso somente leitura.")
-                    st.rerun()
-
-                else:
-                    st.error("❌ Usuário ou senha incorretos.")
-
-        # Dica de usuários disponíveis
+    with st.form("login_form"):
         st.markdown(
-            '<div style="background:#0d1520;border:1px solid #1E2D4555;border-radius:8px;'
-            'padding:12px 16px;margin-top:12px;">'
-            '<div style="font-size:11px;color:#3A4D65;line-height:1.8;">'
-            '🔑 <b style="color:#5A7090;">Dono:</b> usuário configurado no <code>.env</code> '
-            '— acesso total<br>'
-            '👥 <b style="color:#5A7090;">Convidado:</b> opcional via <code>LOL_GUEST_PASSWORD</code> '
-            '— somente análises'
-            '</div></div>',
-            unsafe_allow_html=True)
+            '<div class="login-title">Acesso Exclusivo:<br>O Reino do Preditor</div>',
+            unsafe_allow_html=True,
+        )
+        username = st.text_input(
+            "Usuário",
+            placeholder="Fernando",
+            key="login_user",
+        )
+        password = st.text_input(
+            "Senha",
+            type="password",
+            placeholder="Digite sua senha...",
+            key="login_pass",
+        )
+        submitted = st.form_submit_button(
+            "Login", use_container_width=True, type="primary")
+        st.markdown(
+            '<div class="login-owner-note">Dono: usuário Fernando — acesso total</div>',
+            unsafe_allow_html=True,
+        )
+
+        if submitted:
+            u = username.strip().lower()
+            p = password.strip()
+
+            # Verifica dono
+            owner_hash = OWNER_PASSWORD_HASH or profile.get("password_hash", "")
+            owner_ok = (
+                u == profile["username"].lower() and
+                bool(owner_hash) and
+                _hash(p) == owner_hash
+            )
+            # Verifica convidado
+            guest_ok = (
+                u == GUEST_USERNAME and
+                bool(GUEST_PASSWORD_HASH) and
+                _hash(p) == GUEST_PASSWORD_HASH
+            )
+
+            if owner_ok:
+                st.session_state.authenticated    = True
+                st.session_state.role             = "owner"
+                st.session_state.profile          = profile
+                st.session_state.banca_ini        = float(profile["banca_ini"])
+                st.session_state.banca_meta       = float(profile["banca_meta"])
+                st.session_state.banca_atual_sync = float(profile["banca_atual"])
+                st.success("Bem-vindo, " + profile["display_name"] + "!")
+                st.rerun()
+
+            elif guest_ok:
+                st.session_state.authenticated    = True
+                st.session_state.role             = "guest"
+                st.session_state.profile          = {"display_name": "Convidado"}
+                st.session_state.banca_ini        = 0.0
+                st.session_state.banca_meta       = 1000.0
+                st.session_state.banca_atual_sync = 0.0
+                st.success("Bem-vindo, Convidado! Acesso somente leitura.")
+                st.rerun()
+
+            else:
+                st.error("Usuário ou senha incorretos.")
 
 # ── Banner de convidado ───────────────────────────────────────────────────
 def render_guest_banner():
