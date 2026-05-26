@@ -2,8 +2,9 @@
 
 Sources:
 - LoLEsports for official schedule, live status, and team logos.
+- PandaScore is used only for EWC live games that LoLEsports does not expose.
 - OddsPapi is used by the app only for odds enrichment.
-- PandaScore and Leaguepedia helpers are kept for manual diagnostics, not the main agenda.
+- Leaguepedia helpers are kept for manual diagnostics, not the main agenda.
 """
 
 from __future__ import annotations
@@ -57,6 +58,12 @@ NAME_FIX = {
     "equipe vitality": "Team Vitality",
     "time vitality": "Team Vitality",
     "voo de busca": "FlyQuest",
+    "dplus": "Dplus KIA",
+    "dplus kia": "Dplus KIA",
+    "kt challengers": "KT Rolster Challengers",
+    "kt rolster challengers": "KT Rolster Challengers",
+    "gen.g global academy": "Gen.G Global Academy",
+    "hanwha life esports": "Hanwha Life Esports",
 }
 
 
@@ -125,6 +132,9 @@ def get_league_info(code: str) -> dict:
 def league_from_text(text: str) -> str:
     lower = (text or "").lower()
     mapping = [
+        ("esports world cup", "ewc"),
+        ("korea qualifier", "ewc"),
+        ("ewc", "ewc"),
         ("cblol academy", "cblol_acad"),
         ("cblol acad", "cblol_acad"),
         ("lck challengers", "lck_cl"),
@@ -143,7 +153,6 @@ def league_from_text(text: str) -> str:
         ("tcl", "tcl"),
         ("pcs", "pcs"),
         ("lcp", "pcs"),
-        ("ewc", "ewc"),
         ("msi", "msi"),
     ]
     for needle, code in mapping:
@@ -350,6 +359,9 @@ class DataFetcher:
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_lolesports_schedule():
             self._append_unique(matches, seen, match, query_norm)
+        for match in self._fetch_pandascore_running():
+            if match.get("league_code") == "ewc":
+                self._append_unique(matches, seen, match, query_norm)
 
         self._enrich_logos_from_lolesports(matches)
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
@@ -362,7 +374,8 @@ class DataFetcher:
             return
         if query and query not in match["team1"].lower() and query not in match["team2"].lower():
             return
-        key = f"{match['team1'].lower()}|{match['team2'].lower()}|{match.get('datetime', '')[:10]}"
+        teams_key = "|".join(sorted([_team_key(match["team1"]), _team_key(match["team2"])]))
+        key = f"{teams_key}|{match.get('datetime', '')[:10]}"
         if key in seen:
             return
         seen.add(key)
@@ -512,7 +525,8 @@ class DataFetcher:
 
         league = raw.get("league") or {}
         serie = raw.get("serie") or {}
-        code = league_from_text(f"{league.get('name', '')} {serie.get('full_name', '')}")
+        tournament_name = f"{league.get('name', '')} {serie.get('full_name', '')}".strip()
+        code = league_from_text(tournament_name)
         if code == "_unknown":
             code = guess_league(t1, t2)
         if code == "lpl" and not is_verified_lpl_match(t1, t2):
@@ -525,7 +539,7 @@ class DataFetcher:
             info,
             dt,
             state,
-            league.get("name", ""),
+            tournament_name or league.get("name", ""),
             str(raw.get("number_of_games") or 3),
             o1.get("image_url", ""),
             o2.get("image_url", ""),

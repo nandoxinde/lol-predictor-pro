@@ -62,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "lolesports-agenda-only-v10"
+DATA_VERSION = "live-ewc-no-cache-v11"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -113,7 +113,6 @@ def _five_minute_key() -> str:
     return now.strftime("%Y%m%d%H") + str(now.minute // 5)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def _load_matches_cached(cache_key: str, query: str = "") -> tuple[list[dict], str]:
     return DataFetcher().cargo_search(query)
 
@@ -705,9 +704,9 @@ if st.session_state.selected_match:
     render_operation_room(match, analysis, bankroll_mgr, None, roster1, roster2, banca_atual, banca_meta, twitch_channel)
     st.stop()
 
-if not st.session_state.matches:
-    with st.spinner("Carregando agenda PandaScore..."):
-        st.session_state.matches, st.session_state.matches_source = _load_matches_cached(_minute_key(), "")
+current_query = st.session_state.get("match_query", "")
+with st.spinner("Carregando agenda oficial..."):
+    st.session_state.matches, st.session_state.matches_source = _load_matches_cached(_minute_key(), current_query)
 
 all_matches = list(st.session_state.matches)
 oddspapi_odds = _load_oddspapi_cached(_five_minute_key(), all_matches)
