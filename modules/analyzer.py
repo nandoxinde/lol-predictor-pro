@@ -33,6 +33,7 @@ class MatchAnalyzer:
             match["team2"], t2_stats,
             series_memory,
         )
+        t1_stats, t2_stats, regional_meta = self._apply_regional_meta(lc, t1_stats, t2_stats)
 
         predictions = []
         alerts = []
@@ -106,6 +107,7 @@ class MatchAnalyzer:
             "warnings": warnings,
             "analyst_comment": analyst_comment,
             "series_memory": series_memory,
+            "regional_meta": regional_meta,
         }
 
     def _apply_series_memory(self, t1_name: str, t1: dict, t2_name: str, t2: dict, memory: dict) -> tuple[dict, dict]:
@@ -118,13 +120,21 @@ class MatchAnalyzer:
         mom_t1 = float(momentum.get("team1", 0.5))
         mom_t2 = float(momentum.get("team2", 0.5))
         event_rates = memory.get("event_rates", {})
+        last_map = memory.get("last_map", {})
+        boost_side = self._early_control_winner(last_map)
 
         for stat_key, memory_key in (("first_blood_rate", "first_blood"), ("first_dragon_rate", "first_dragon")):
             rates = event_rates.get(memory_key, {})
             live_t1 = float(rates.get("team1", 0.5))
             live_t2 = float(rates.get("team2", 0.5))
-            t1_adj[stat_key] = float(np.clip(t1.get(stat_key, 0.5) * 0.68 + live_t1 * 0.24 + mom_t1 * 0.08, 0.25, 0.82))
-            t2_adj[stat_key] = float(np.clip(t2.get(stat_key, 0.5) * 0.68 + live_t2 * 0.24 + mom_t2 * 0.08, 0.25, 0.82))
+            base_t1 = t1.get(stat_key, 0.5) * 0.68 + live_t1 * 0.24 + mom_t1 * 0.08
+            base_t2 = t2.get(stat_key, 0.5) * 0.68 + live_t2 * 0.24 + mom_t2 * 0.08
+            if boost_side == "team1":
+                base_t1 *= 1.15
+            elif boost_side == "team2":
+                base_t2 *= 1.15
+            t1_adj[stat_key] = float(np.clip(base_t1, 0.25, 0.86))
+            t2_adj[stat_key] = float(np.clip(base_t2, 0.25, 0.86))
 
         t1_adj["winrate"] = float(np.clip(t1.get("winrate", 0.5) + (mom_t1 - 0.5) * 0.10, 0.2, 0.9))
         t2_adj["winrate"] = float(np.clip(t2.get("winrate", 0.5) + (mom_t2 - 0.5) * 0.10, 0.2, 0.9))
@@ -132,7 +142,85 @@ class MatchAnalyzer:
         t2_adj["source"] = f'{t2.get("source", "Modelo")} + memória série'
         t1_adj["series_momentum"] = mom_t1
         t2_adj["series_momentum"] = mom_t2
+        if boost_side:
+            memory["momentum_boost"] = {
+                "side": boost_side,
+                "multiplier": 1.15,
+                "reason": "Vencedor do último mapa controlou early game/objetivos.",
+            }
         return t1_adj, t2_adj
+
+    @staticmethod
+    def _early_control_winner(last_map: dict) -> str | None:
+        winner = last_map.get("winner")
+        if winner not in {"team1", "team2"}:
+            return None
+
+        signals = 0
+        if last_map.get("first_blood") == winner:
+            signals += 1
+        if last_map.get("first_dragon") == winner:
+            signals += 1
+
+        dragons = last_map.get("dragons") or {}
+        kills = last_map.get("kills") or {}
+        other = "team2" if winner == "team1" else "team1"
+        if int(dragons.get(winner, 0) or 0) > int(dragons.get(other, 0) or 0):
+            signals += 1
+        if int(kills.get(winner, 0) or 0) >= int(kills.get(other, 0) or 0) + 3:
+            signals += 1
+
+        return winner if signals >= 2 else None
+
+    def _apply_regional_meta(self, league_code: str, t1: dict, t2: dict) -> tuple[dict, dict, dict]:
+        code = (league_code or "").lower()
+        t1_adj = dict(t1)
+        t2_adj = dict(t2)
+        meta = {"code": code, "applied": False, "notes": []}
+
+        if code == "lpl":
+            self._scale_kill_projection(t1_adj, 1.15)
+            self._scale_kill_projection(t2_adj, 1.15)
+            self._boost_event_leader(t1_adj, t2_adj, "first_blood_rate", 1.10)
+            meta.update({"applied": True, "style": "agressividade"})
+            meta["notes"].append("LPL: projeção de kills +15% e maior peso para First Blood rápido.")
+        elif code == "lck":
+            self._scale_kill_projection(t1_adj, 0.90)
+            self._scale_kill_projection(t2_adj, 0.90)
+            t1_adj["avg_game_length"] = float(t1_adj.get("avg_game_length", 32) * 1.08)
+            t2_adj["avg_game_length"] = float(t2_adj.get("avg_game_length", 32) * 1.08)
+            self._boost_event_leader(t1_adj, t2_adj, "first_dragon_rate", 1.10)
+            meta.update({"applied": True, "style": "controle"})
+            meta["notes"].append("LCK: kills -10%, duração +8% e maior peso para First Dragon/macro.")
+
+        if meta["applied"]:
+            t1_adj["regional_meta"] = meta["style"]
+            t2_adj["regional_meta"] = meta["style"]
+        return t1_adj, t2_adj, meta
+
+    @staticmethod
+    def _scale_kill_projection(stats_dict: dict, multiplier: float) -> None:
+        for key in ("avg_kills", "avg_deaths", "total_kills_avg"):
+            if key in stats_dict:
+                stats_dict[key] = float(max(0.0, stats_dict.get(key, 0) * multiplier))
+
+    @staticmethod
+    def _boost_event_leader(t1: dict, t2: dict, key: str, multiplier: float) -> None:
+        t1_rate = float(t1.get(key, 0.5))
+        t2_rate = float(t2.get(key, 0.5))
+        if abs(t1_rate - t2_rate) < 0.01:
+            t1_score = float(t1.get("winrate", 0.5)) + float(t1.get("avg_kills", 0)) / 40
+            t2_score = float(t2.get("winrate", 0.5)) + float(t2.get("avg_kills", 0)) / 40
+            leader = "team1" if t1_score >= t2_score else "team2"
+        else:
+            leader = "team1" if t1_rate > t2_rate else "team2"
+
+        if leader == "team1":
+            t1[key] = float(np.clip(t1_rate * multiplier, 0.25, 0.88))
+            t2[key] = float(np.clip(t2_rate, 0.25, 0.82))
+        else:
+            t1[key] = float(np.clip(t1_rate, 0.25, 0.82))
+            t2[key] = float(np.clip(t2_rate * multiplier, 0.25, 0.88))
 
     def _predict_winner(self, t1_name, t1, t2_name, t2):
         wr_weight, gd15_weight, kills_weight = 0.50, 0.25, 0.15
