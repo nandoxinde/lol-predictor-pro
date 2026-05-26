@@ -3,7 +3,7 @@
 Sources:
 - PandaScore for real running/upcoming matches and team images.
 - LoLEsports for additional validated live events when configured.
-- Liquipedia Cargo as a schedule fallback only. It never marks games live.
+- Leaguepedia/Fandom Cargo as a cached schedule fallback. It never marks games live.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ TZ_BRT = timezone(timedelta(hours=-3))
 PANDA_BASE = "https://api.pandascore.co"
 PANDA_TOKEN = get_secret("PANDASCORE_TOKEN")
 LOLESPORTS_KEY = get_secret("LOLESPORTS_API_KEY")
+LEAGUEPEDIA_CACHE_TTL = 15 * 60
+_LEAGUEPEDIA_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
 
 
 def now_brt() -> datetime:
@@ -280,8 +282,12 @@ class DataFetcher:
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_oddspapi_schedule():
             self._append_unique(matches, seen, match, query_norm)
-        for match in self._fetch_liquipedia_schedule(query):
-            self._append_unique(matches, seen, match, query_norm)
+
+        # Leaguepedia is useful but rate-limited. Use it only when the other
+        # sources did not provide enough context or when the user searches.
+        if query_norm or len(matches) < 8:
+            for match in self._fetch_leaguepedia_schedule(query):
+                self._append_unique(matches, seen, match, query_norm)
 
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
         if matches:
@@ -475,7 +481,14 @@ class DataFetcher:
         except Exception:
             return []
 
-    def _fetch_liquipedia_schedule(self, query: str = "") -> list[dict]:
+    def _fetch_leaguepedia_schedule(self, query: str = "") -> list[dict]:
+        cache_key = query.strip().lower() or "__all__"
+        cached = _LEAGUEPEDIA_CACHE.get(cache_key)
+        if cached:
+            cached_at, cached_matches = cached
+            if (datetime.now(timezone.utc) - cached_at).total_seconds() < LEAGUEPEDIA_CACHE_TTL:
+                return [dict(match) for match in cached_matches]
+
         now_utc = datetime.now(timezone.utc)
         where = (
             "DateTime_UTC >= '" + now_utc.strftime("%Y-%m-%d %H:%M:%S") + "' "
@@ -496,7 +509,7 @@ class DataFetcher:
         try:
             response = requests.get(self.LQ_API, params=params, headers=self.LQ_HEADERS, timeout=12)
             if response.status_code != 200:
-                return []
+                return [dict(match) for match in cached[1]] if cached else []
             matches = []
             for row in response.json().get("cargoquery", []):
                 data = row.get("title", row)
@@ -520,9 +533,14 @@ class DataFetcher:
                     data.get("BestOf") or "3",
                     source="Leaguepedia",
                 ))
+            if matches:
+                _LEAGUEPEDIA_CACHE[cache_key] = (datetime.now(timezone.utc), matches)
             return matches
         except Exception:
-            return []
+            return [dict(match) for match in cached[1]] if cached else []
+
+    def _fetch_liquipedia_schedule(self, query: str = "") -> list[dict]:
+        return self._fetch_leaguepedia_schedule(query)
 
     def _demo_matches(self, query: str = "") -> list[dict]:
         base = now_brt()
