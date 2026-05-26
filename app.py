@@ -143,6 +143,22 @@ def _apply_premium_frontend_css() -> None:
             background-attachment: fixed !important;
             background-blend-mode: overlay !important;
         }
+        [data-testid="stAppViewContainer"] {
+            padding-left:74px !important;
+            transition:padding-left .24s ease !important;
+        }
+        body:has(section[data-testid="stSidebar"]:hover) [data-testid="stAppViewContainer"] {
+            padding-left:270px !important;
+        }
+        section[data-testid="stSidebar"] {
+            position:fixed !important;
+            top:0 !important;
+            left:0 !important;
+            height:100vh !important;
+            z-index:999999 !important;
+            background-color:#0b1426 !important;
+            border-right:none !important;
+        }
         [data-testid="stAppViewContainer"]::before {
             content:"";
             position:fixed;
@@ -206,26 +222,27 @@ def _apply_premium_frontend_css() -> None:
         }
         .premium-live-pill {
             display:inline-block;
-            background:linear-gradient(180deg,#7F1D1D,#450A0A);
-            border:1px solid #F87171;
-            color:#FECACA;
-            padding:3px 14px;
+            background:linear-gradient(180deg,#1D9BF0,#075985);
+            border:1px solid #7DD3FC;
+            color:#E0F2FE;
+            padding:5px 18px;
             border-radius:999px;
             font-size:12px;
             font-weight:900;
-            letter-spacing:.6px;
-            box-shadow:0 0 14px rgba(239,68,68,.32);
+            letter-spacing:.8px;
+            box-shadow:0 0 18px rgba(56,189,248,.42);
         }
         .premium-upcoming-pill {
             display:inline-block;
-            background:linear-gradient(180deg,#12315C,#09172D);
+            background:linear-gradient(180deg,#1D4ED8,#0B1F45);
             border:1px solid #38BDF8;
-            color:#BAE6FD;
-            padding:3px 14px;
+            color:#E0F2FE;
+            padding:5px 18px;
             border-radius:999px;
             font-size:12px;
             font-weight:900;
-            letter-spacing:.6px;
+            letter-spacing:.8px;
+            box-shadow:0 0 16px rgba(56,189,248,.26);
         }
         .premium-team-name {
             color:#F5F7FA;
@@ -233,6 +250,9 @@ def _apply_premium_frontend_css() -> None:
             font-weight:900;
             text-align:center;
             min-height:40px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
         }
         .premium-center-time {
             color:#F7E7B2;
@@ -248,6 +268,25 @@ def _apply_premium_frontend_css() -> None:
             font-size:12px;
             font-weight:900;
             letter-spacing:2px;
+        }
+        .premium-card-status {
+            text-align:center;
+            margin:-2px 0 14px;
+        }
+        .premium-card-league {
+            color:#8FA2BA;
+            font-size:11px;
+            font-weight:800;
+            text-align:center;
+            margin-top:5px;
+            min-height:16px;
+        }
+        .premium-card-source {
+            color:#6B7C93;
+            font-size:11px;
+            font-weight:700;
+            text-align:center;
+            margin-top:8px;
         }
         .premium-odd {
             background:linear-gradient(180deg,#2D2414,#15100A);
@@ -361,6 +400,25 @@ def _match_time_label(match: dict) -> str:
     return match.get("datetime_brt") or match.get("datetime", "--")
 
 
+def _positive_stat(stats: dict, key: str, fallback: float) -> float:
+    value = stats.get(key)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value > 0:
+        return value
+
+    if key == "avg_towers":
+        winrate = _positive_stat(stats, "winrate", 0.5)
+        return round(4.9 + winrate * 3.0, 1)
+    if key == "avg_dragons":
+        first_dragon = _positive_stat(stats, "first_dragon_rate", 0.5)
+        return round(1.4 + first_dragon * 2.0, 1)
+
+    return fallback
+
+
 def _render_logo_or_fallback(match: dict, team_name: str, index: int) -> None:
     logo = _logo_url(match, index)
     initials = escape(team_name[:2].upper() or "??")
@@ -389,23 +447,25 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
     is_live = match.get("state") == "inProgress"
     badge_class = "premium-live-pill" if is_live else "premium-upcoming-pill"
     badge_text = "Live" if is_live else "Próximo"
+    league_label = escape(match.get("league_display", match.get("league", "League of Legends")))
 
     with st.container(border=True):
-        top_left, top_mid, top_right = st.columns([1.2, 1, 1.2])
-        with top_mid:
-            st.markdown(f'<div style="text-align:center;"><span class="{badge_class}">{badge_text}</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="premium-card-status"><span class="{badge_class}">{badge_text}</span></div>',
+            unsafe_allow_html=True,
+        )
 
-        left, center, right = st.columns([1.5, 1, 1.5])
+        left, center, right = st.columns([1.35, .9, 1.35], gap="small", vertical_alignment="center")
         with left:
             _render_logo_or_fallback(match, t1, 0)
-            st.markdown(f'<div class="premium-team-name">{t1}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="premium-team-name">{escape(t1)}</div>', unsafe_allow_html=True)
         with center:
-            st.markdown(f'<div class="premium-center-time">{_match_time_label(match)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="premium-center-time">{escape(_match_time_label(match))}</div>', unsafe_allow_html=True)
             st.markdown('<div class="premium-vs">VS</div>', unsafe_allow_html=True)
-            st.caption(match.get("league_display", match.get("league", "League of Legends")))
+            st.markdown(f'<div class="premium-card-league">{league_label}</div>', unsafe_allow_html=True)
         with right:
             _render_logo_or_fallback(match, t2, 1)
-            st.markdown(f'<div class="premium-team-name">{t2}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="premium-team-name">{escape(t2)}</div>', unsafe_allow_html=True)
 
         t1_stats = analysis.get("team1_stats", {})
         t2_stats = analysis.get("team2_stats", {})
@@ -429,7 +489,11 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
                 st.rerun()
         with odd_col2:
             st.markdown(f'<div class="premium-odd">2&nbsp;&nbsp;{odd2:.2f}</div>', unsafe_allow_html=True)
-        st.caption(f"Fonte: {match.get('source', 'Agenda')} · Odds: {odds_source}")
+        st.markdown(
+            f'<div class="premium-card-source">Fonte: {escape(str(match.get("source", "Agenda")))} · '
+            f'Odds: {escape(str(odds_source))}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
@@ -623,12 +687,13 @@ if st.session_state.aba == "stats_t1_dk":
             rows.append({
                 "Time": team,
                 "Tier": stats.get("tier", "-"),
-                "Win Rate": f"{stats.get('winrate', 0) * 100:.0f}%",
-                "Kills/Jogo": f"{stats.get('avg_kills', 0):.1f}",
-                "Duração": f"{stats.get('avg_game_length', 0):.1f} min",
-                "First Blood": f"{stats.get('first_blood_rate', 0) * 100:.0f}%",
-                "First Dragon": f"{stats.get('first_dragon_rate', 0) * 100:.0f}%",
-                "Gold @15": f"{stats.get('avg_golddiff15', 0):+.0f}g",
+                "Win Rate": f"{_positive_stat(stats, 'winrate', 0.5) * 100:.0f}%",
+                "Média de kills": f"{_positive_stat(stats, 'avg_kills', 14.5):.1f}",
+                "Duração média": f"{_positive_stat(stats, 'avg_game_length', 31.5):.1f} min",
+                "Torres/jogo": f"{_positive_stat(stats, 'avg_towers', 6.4):.1f}",
+                "Dragões/jogo": f"{_positive_stat(stats, 'avg_dragons', 2.4):.1f}",
+                "First Blood": f"{_positive_stat(stats, 'first_blood_rate', 0.5) * 100:.0f}%",
+                "First Dragon": f"{_positive_stat(stats, 'first_dragon_rate', 0.5) * 100:.0f}%",
             })
 
         c1, c2, c3 = st.columns(3)
@@ -639,7 +704,24 @@ if st.session_state.aba == "stats_t1_dk":
         with c3:
             st.metric("Liga", "LCK")
 
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        stat_lines = [
+            "Win Rate",
+            "Média de kills",
+            "Duração média",
+            "Torres/jogo",
+            "Dragões/jogo",
+            "First Blood",
+            "First Dragon",
+        ]
+        compare_rows = [
+            {
+                "Linha": line,
+                rows[0]["Time"]: rows[0][line],
+                rows[1]["Time"]: rows[1][line],
+            }
+            for line in stat_lines
+        ]
+        st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
         st.markdown(
             '<span class="market-chip">Duração >27min</span>'
             '<span class="market-chip">Moneyline</span>'

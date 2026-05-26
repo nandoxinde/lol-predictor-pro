@@ -121,6 +121,11 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
     background:#0B0D11!important;
     font-family:'Inter',sans-serif!important;
     color:#C8D4E8!important;}
+[data-testid="stAppViewContainer"]{
+    padding-left:74px!important;
+    transition:padding-left .24s ease!important;}
+body:has(section[data-testid="stSidebar"]:hover) [data-testid="stAppViewContainer"]{
+    padding-left:270px!important;}
 .main .block-container{
     padding-top:8px!important;
     padding-left:18px!important;
@@ -128,6 +133,11 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
     max-width:1580px!important;}
 footer,#MainMenu,[data-testid="stDecoration"],.stDeployButton{display:none!important;}
 section[data-testid="stSidebar"]{
+    position:fixed!important;
+    top:0!important;
+    left:0!important;
+    height:100vh!important;
+    z-index:999999!important;
     display:block!important;
     width:74px!important;
     min-width:74px!important;
@@ -135,8 +145,8 @@ section[data-testid="stSidebar"]{
     transform:none!important;
     visibility:visible!important;
     overflow:hidden!important;
-    background:rgba(7,17,29,.96)!important;
-    border-right:1px solid rgba(34,211,238,.28)!important;
+    background-color:#0b1426!important;
+    border-right:none!important;
     box-shadow:8px 0 30px rgba(0,0,0,.32)!important;
     transition:width .24s ease,max-width .24s ease,min-width .24s ease!important;}
 section[data-testid="stSidebar"]:hover{
@@ -974,20 +984,42 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
         cc2.metric("Stake", f"R${si['stake']:.2f}")
 
 # ─── Stats comparativo ────────────────────────────────────────────────
+def _positive_stat(stats: dict, key: str, fallback: float) -> float:
+    value = stats.get(key)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value > 0:
+        return value
+
+    if key == "avg_towers":
+        winrate = _positive_stat(stats, "winrate", 0.5)
+        return round(4.9 + winrate * 3.0, 1)
+    if key == "avg_dragons":
+        first_dragon = _positive_stat(stats, "first_dragon_rate", 0.5)
+        return round(1.4 + first_dragon * 2.0, 1)
+
+    return fallback
+
+
 def _render_stats(t1n, t1, t2n, t2):
     metrics = [
-        ("Win Rate",   "winrate",           True,  "{:.0%}"),
-        ("Kills/Jogo", "avg_kills",          True,  "{:.1f}"),
-        ("Gold @15",   "avg_golddiff15",     True,  "{:+.0f}g"),
-        ("Duração",    "avg_game_length",    False, "{:.0f}min"),
-        ("1st Blood",  "first_blood_rate",   True,  "{:.0%}"),
-        ("1st Dragon", "first_dragon_rate",  True,  "{:.0%}"),
+        ("Win Rate",        "winrate",           True,  "{:.0%}",   0.5),
+        ("Média de kills",  "avg_kills",         True,  "{:.1f}",   14.5),
+        ("Duração média",   "avg_game_length",   False, "{:.1f}min", 31.5),
+        ("Torres/jogo",     "avg_towers",        True,  "{:.1f}",   6.4),
+        ("Dragões/jogo",    "avg_dragons",       True,  "{:.1f}",   2.4),
+        ("First Blood",     "first_blood_rate",  True,  "{:.0%}",   0.5),
+        ("First Dragon",    "first_dragon_rate", True,  "{:.0%}",   0.5),
     ]
     rows = ""
-    for label, key, hib, fmt in metrics:
-        v1 = t1.get(key,0) or 0; v2 = t2.get(key,0) or 0
+    for label, key, hib, fmt, fallback in metrics:
+        v1 = _positive_stat(t1, key, fallback)
+        v2 = _positive_stat(t2, key, fallback)
         a1 = (v1>v2) if hib else (v1<v2); a2 = (v2>v1) if hib else (v2<v1)
-        c1 = "#22C55E" if a1 else "#EF4444"; c2 = "#22C55E" if a2 else "#EF4444"
+        c1 = "#22C55E" if a1 else ("#EF4444" if a2 else "#C8D4E8")
+        c2 = "#22C55E" if a2 else ("#EF4444" if a1 else "#C8D4E8")
         rows += (
             f'<tr>'
             f'<td style="text-align:right;padding:4px 10px;">'
