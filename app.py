@@ -10,6 +10,8 @@ import json
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from html import escape
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -60,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "official-lolesports-v8"
+DATA_VERSION = "split-sources-logos-twitch-v9"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -322,13 +324,13 @@ def _logo_url(match: dict, index: int) -> str:
     else:
         direct = match.get("team2_image", "")
     if direct:
-        return direct
+        return _safe_logo_url(direct)
 
     teams = match.get("teams") or match.get("opponents") or []
     try:
         team = teams[index]
         if isinstance(team, dict):
-            return (
+            return _safe_logo_url(
                 team.get("image_url")
                 or team.get("image")
                 or (team.get("opponent") or {}).get("image_url")
@@ -339,6 +341,21 @@ def _logo_url(match: dict, index: int) -> str:
     return ""
 
 
+def _safe_logo_url(url: str) -> str:
+    value = (url or "").strip()
+    if value.startswith("http://static.lolesports.com/"):
+        value = value.replace("http://", "https://", 1)
+    if "team-tbd.png" in value:
+        return ""
+    try:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return ""
+    except Exception:
+        return ""
+    return value
+
+
 def _match_time_label(match: dict) -> str:
     if match.get("state") == "inProgress":
         return "AO VIVO"
@@ -347,11 +364,22 @@ def _match_time_label(match: dict) -> str:
 
 def _render_logo_or_fallback(match: dict, team_name: str, index: int) -> None:
     logo = _logo_url(match, index)
+    initials = escape(team_name[:2].upper() or "??")
     if logo:
-        st.image(logo, width=88)
+        st.markdown(
+            f'''
+            <div style="position:relative;width:88px;height:88px;margin:0 auto 8px;">
+              <img src="{escape(logo)}" loading="lazy"
+                   onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
+                   style="width:88px;height:88px;object-fit:contain;border-radius:18px;display:block;" />
+              <div class="premium-logo-fallback" style="display:none;margin:0;">{initials}</div>
+            </div>
+            ''',
+            unsafe_allow_html=True,
+        )
     else:
         st.markdown(
-            f'<div class="premium-logo-fallback">{team_name[:2].upper()}</div>',
+            f'<div class="premium-logo-fallback">{initials}</div>',
             unsafe_allow_html=True,
         )
 

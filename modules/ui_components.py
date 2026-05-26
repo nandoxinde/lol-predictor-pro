@@ -652,6 +652,7 @@ _TWITCH_CHANNELS = {
     "lck":"lck","lpl":"lpl","lec":"lec","lcs":"lcs",
     "cblol":"cblol","cblol_acad":"cblol","lck_cl":"lck",
     "tcl":"tcl","vcs":"vcs","lla":"lla","ljl":"ljl",
+    "msi":"riotgames","ewc":"riotgames",
     "_unknown":"baiano","_default":"baiano",
 }
 
@@ -682,26 +683,49 @@ def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
         f'<span style="font-size:10px;color:#3A4D65;">{lg}</span></div>',
         unsafe_allow_html=True)
 
-    # Iframe direto: evita reinicialização do SDK e usa parent dinâmico do host atual.
+    # Iframe direto: usa o domínio real do app Streamlit como parent.
     components.html(
         f'''<!DOCTYPE html><html><head>
         <style>
         *{{margin:0;padding:0;box-sizing:border-box;}}
         html,body{{background:#000;width:100%;height:100%;overflow:hidden;}}
         iframe{{width:100%;height:{height}px;border:0;display:block;background:#000;}}
+        .fallback{{position:absolute;inset:auto 14px 14px 14px;color:#c8d4e8;font:12px Inter,Arial,sans-serif;
+          background:rgba(9,12,20,.86);border:1px solid #1A2D4A;border-radius:8px;padding:10px;}}
+        .fallback a{{color:#9146FF;font-weight:800;}}
         </style></head><body>
         <div id="player"></div>
+        <div class="fallback">Se o player continuar bloqueado pelo navegador, abra direto:
+          <a href="https://www.twitch.tv/{ch}" target="_blank" rel="noopener">twitch.tv/{ch}</a>
+        </div>
         <script>
-        const parent = window.location.hostname || "localhost";
+        function getParentHost() {{
+          try {{
+            if (document.referrer) return new URL(document.referrer).hostname;
+          }} catch (e) {{}}
+          try {{
+            if (window.parent && window.parent.location && window.parent.location.hostname) {{
+              return window.parent.location.hostname;
+            }}
+          }} catch (e) {{}}
+          return window.location.hostname || "localhost";
+        }}
+        const parent = getParentHost();
         const channel = "{ch}";
+        const parents = new Set([parent, window.location.hostname, "localhost", "127.0.0.1"]);
+        let parentParams = "";
+        parents.forEach((host) => {{
+          if (host) parentParams += "&parent=" + encodeURIComponent(host);
+        }});
         const src = "https://player.twitch.tv/?channel=" + encodeURIComponent(channel)
-          + "&parent=" + encodeURIComponent(parent)
-          + "&parent=localhost&parent=127.0.0.1"
+          + parentParams
           + "&autoplay=false&muted=false";
         document.getElementById("player").innerHTML =
           '<iframe src="' + src + '" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>';
         </script></body></html>''',
         height=height+4, scrolling=False)
+
+    st.link_button("Abrir transmissão em nova aba", f"https://www.twitch.tv/{ch}", use_container_width=True)
 
     st.markdown(
         '<div style="background:#090C14;border:1px solid #1A2D4A;border-top:none;'

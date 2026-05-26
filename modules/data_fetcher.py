@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import numpy as np
 import requests
@@ -62,6 +63,39 @@ NAME_FIX = {
 def fix_name(name: str) -> str:
     cleaned = (name or "").strip()
     return NAME_FIX.get(cleaned.lower(), cleaned)
+
+
+def _team_key(name: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", (name or "").lower()).strip()
+    aliases = {
+        "dplus": "dplus kia",
+        "dk": "dplus kia",
+        "gen g": "gen g esports",
+        "beijing jdg esports": "jd gaming",
+        "jdg esports": "jd gaming",
+        "thunder talk gaming": "thundertalk gaming",
+        "top esports": "top esports",
+        "xi an team we": "team we",
+        "edward gaming": "edward gaming",
+        "kt challengers": "kt rolster challengers",
+        "ns challengers": "nongshim redforce challengers",
+        "dns challengers": "dn soopers challengers",
+    }
+    return aliases.get(text, text)
+
+
+def _clean_image_url(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    if value.startswith("http://static.lolesports.com/"):
+        value = value.replace("http://", "https://", 1)
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    if "team-tbd.png" in value:
+        return ""
+    return value
 
 
 LEAGUE_INFO = {
@@ -294,6 +328,7 @@ class DataFetcher:
         if LOLESPORTS_KEY:
             headers["x-api-key"] = LOLESPORTS_KEY
         self.live.headers.update(headers)
+        self.team_logos: dict[str, str] = {}
 
     @staticmethod
     def resolve_tier(name: str) -> str:
@@ -326,6 +361,7 @@ class DataFetcher:
             for match in self._fetch_leaguepedia_schedule(query):
                 self._append_unique(matches, seen, match, query_norm)
 
+        self._enrich_logos_from_lolesports(matches)
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
         if matches:
             return matches, "real"
@@ -341,6 +377,35 @@ class DataFetcher:
             return
         seen.add(key)
         matches.append(match)
+
+    def _remember_team_logo(self, team: str, image: str) -> None:
+        key = _team_key(team)
+        logo = _clean_image_url(image)
+        if key and logo:
+            self.team_logos[key] = logo
+
+    def _enrich_logos_from_lolesports(self, matches: list[dict]) -> None:
+        logos: dict[str, str] = dict(self.team_logos)
+        for match in matches:
+            if match.get("source") != "LoLEsports":
+                continue
+            for team_key, image_key in (("team1", "team1_image"), ("team2", "team2_image")):
+                team = _team_key(match.get(team_key, ""))
+                image = _clean_image_url(match.get(image_key, ""))
+                if team and image:
+                    logos[team] = image
+
+        if not logos:
+            return
+
+        for match in matches:
+            for team_key, image_key in (("team1", "team1_image"), ("team2", "team2_image")):
+                current = _clean_image_url(match.get(image_key, ""))
+                official = logos.get(_team_key(match.get(team_key, "")))
+                if official and (not current or match.get("source") != "LoLEsports"):
+                    match[image_key] = official
+                else:
+                    match[image_key] = current
 
     def _fetch_pandascore_running(self) -> list[dict]:
         if not PANDA_TOKEN:
@@ -495,6 +560,8 @@ class DataFetcher:
                 teams = event.get("match", {}).get("teams", [])
                 if len(teams) < 2:
                     continue
+                for team in teams:
+                    self._remember_team_logo(team.get("name", ""), team.get("image", ""))
                 dt = parse_to_brt(event.get("startTime"))
                 if dt:
                     elapsed = (now_brt() - dt).total_seconds() / 3600
@@ -546,6 +613,9 @@ class DataFetcher:
                 for event in events:
                     if event.get("type") != "match":
                         continue
+                    event_teams = event.get("match", {}).get("teams", [])
+                    for team in event_teams:
+                        self._remember_team_logo(team.get("name", ""), team.get("image", ""))
                     state_raw = str(event.get("state", "")).lower()
                     if state_raw == "completed":
                         continue
@@ -557,7 +627,7 @@ class DataFetcher:
                     if dt_utc < now - timedelta(hours=5) or dt_utc > end:
                         continue
 
-                    teams = event.get("match", {}).get("teams", [])
+                    teams = event_teams
                     if len(teams) < 2:
                         continue
 
@@ -713,8 +783,8 @@ class DataFetcher:
             "team2": fix_name(team2),
             "team1_code": fix_name(team1)[:4].upper(),
             "team2_code": fix_name(team2)[:4].upper(),
-            "team1_image": team1_image or "",
-            "team2_image": team2_image or "",
+            "team1_image": _clean_image_url(team1_image),
+            "team2_image": _clean_image_url(team2_image),
             "state": state,
             "blockName": tournament,
             "tournament": tournament,
