@@ -625,7 +625,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     # Split: player (L) | mercados (R)
     col_v, col_m = st.columns([3,2])
     with col_v:
-        _render_twitch(twitch_channel or lc, t1, t2, lg)
+        _render_video_player(twitch_channel or lc, t1, t2, lg, match=match)
     with col_m:
         _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2)
 
@@ -716,7 +716,7 @@ def _render_lolesports_live_stats(match: dict, live_stats: dict) -> None:
     render_side(blue_col, blue_name, blue, "#1565C0")
     render_side(red_col, red_name, red, "#F59E0B")
 
-# ─── Player Twitch ────────────────────────────────────────────────────
+# ─── Player / Transmissões ─────────────────────────────────────────────
 _TWITCH_CHANNELS = {
     "lck":"lck","lpl":"lpl","lec":"lec","lcs":"lcs",
     "cblol":"cblol","cblol_acad":"cblol","lck_cl":"lck",
@@ -737,22 +737,69 @@ def _resolve_channel(code_or_name: str) -> str:
           .split("?")[0].split("/")[0].strip())
     return ch or "baiano"
 
-def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
-    ch = st.session_state.get("twitch_custom","") or _resolve_channel(channel_or_code)
-    ch = _resolve_channel(ch)  # normaliza caso seja URL
+def _default_video_platform(match: dict) -> str:
+    provider = (match.get("stream_provider") or "").lower()
+    if provider in {"afreecatv", "soop"}:
+        return "SOOP"
+    if provider == "youtube":
+        return "YouTube"
+    if provider == "twitch":
+        return "Twitch"
+    if match.get("league_code") in {"ewc", "lck_cl"}:
+        return "SOOP"
+    return st.session_state.get("video_platform", "Twitch")
 
-    label = f"🟣 twitch.tv/{ch}"
-    if t1 and t2: label += f"  ·  {t1} vs {t2}"
 
-    st.markdown(
-        f'<div style="background:#090C14;border:1px solid #1A2D4A;'
-        f'border-radius:8px 8px 0 0;padding:7px 13px;'
-        f'display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="font-size:11px;font-weight:700;color:#9146FF;">{label}</span>'
-        f'<span style="font-size:10px;color:#3A4D65;">{lg}</span></div>',
-        unsafe_allow_html=True)
+def _default_stream_value(platform: str, channel_or_code: str, match: dict) -> str:
+    parameter = (match.get("stream_parameter") or "").strip()
+    if platform == "SOOP":
+        return parameter or ("afchall" if match.get("league_code") == "lck_cl" else "aflol")
+    if platform == "Twitch":
+        return st.session_state.get("twitch_custom", "") or parameter or _resolve_channel(channel_or_code)
+    if platform == "YouTube":
+        return st.session_state.get("youtube_custom", "")
+    if platform == "Kick":
+        return st.session_state.get("kick_custom", "")
+    return st.session_state.get("external_stream_custom", "")
 
-    # Iframe direto: usa o domínio real do app Streamlit como parent.
+
+def _extract_youtube_embed(value: str) -> tuple[str, str]:
+    raw = (value or "").strip()
+    if not raw:
+        return "", ""
+    if "youtube.com/embed/" in raw:
+        video_id = raw.split("youtube.com/embed/", 1)[1].split("?")[0].split("/")[0]
+        return f"https://www.youtube.com/embed/{video_id}?autoplay=0&rel=0", f"https://www.youtube.com/watch?v={video_id}"
+    if "youtu.be/" in raw:
+        video_id = raw.split("youtu.be/", 1)[1].split("?")[0].split("/")[0]
+        return f"https://www.youtube.com/embed/{video_id}?autoplay=0&rel=0", f"https://www.youtube.com/watch?v={video_id}"
+    if "watch?v=" in raw:
+        video_id = raw.split("watch?v=", 1)[1].split("&")[0]
+        return f"https://www.youtube.com/embed/{video_id}?autoplay=0&rel=0", raw
+    if raw.startswith("UC") and len(raw) > 10:
+        return f"https://www.youtube.com/embed/live_stream?channel={raw}", f"https://www.youtube.com/channel/{raw}/live"
+    if raw.startswith("http"):
+        return "", raw
+    return f"https://www.youtube.com/embed/{raw}?autoplay=0&rel=0", f"https://www.youtube.com/watch?v={raw}"
+
+
+def _iframe_player(src: str, height: int = 340) -> None:
+    safe_src = escape(src, quote=True)
+    components.html(
+        f'''<!DOCTYPE html><html><head><style>
+        *{{margin:0;padding:0;box-sizing:border-box;}}
+        html,body{{background:#000;width:100%;height:100%;overflow:hidden;}}
+        iframe{{width:100%;height:{height}px;border:0;display:block;background:#000;}}
+        </style></head><body>
+        <iframe src="{safe_src}" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>
+        </body></html>''',
+        height=height + 4,
+        scrolling=False,
+    )
+
+
+def _render_twitch_iframe(channel: str, height: int = 340) -> None:
+    ch = _resolve_channel(channel)
     components.html(
         f'''<!DOCTYPE html><html><head>
         <style>
@@ -792,20 +839,88 @@ def _render_twitch(channel_or_code: str, t1="", t2="", lg="", height=340):
         document.getElementById("player").innerHTML =
           '<iframe src="' + src + '" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>';
         </script></body></html>''',
-        height=height+4, scrolling=False)
+        height=height + 4,
+        scrolling=False,
+    )
 
-    st.link_button("Abrir transmissão em nova aba", f"https://www.twitch.tv/{ch}", use_container_width=True)
+
+def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, match=None):
+    match = match or {}
+    default_platform = _default_video_platform(match)
+    options = ["SOOP", "YouTube", "Twitch", "Kick", "Link externo"]
+    if default_platform not in options:
+        default_platform = "Twitch"
+
+    label_match = f" · {t1} vs {t2}" if t1 and t2 else ""
+    provider_note = ""
+    if match.get("stream_provider") or match.get("stream_parameter"):
+        provider_note = f' · Oficial: {escape(match.get("stream_provider", ""))}/{escape(match.get("stream_parameter", ""))}'
+
+    st.markdown(
+        f'<div style="background:#090C14;border:1px solid #1A2D4A;'
+        f'border-radius:8px 8px 0 0;padding:7px 13px;'
+        f'display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="font-size:11px;font-weight:700;color:#9146FF;">Central de transmissão{label_match}</span>'
+        f'<span style="font-size:10px;color:#3A4D65;">{escape(lg)}{provider_note}</span></div>',
+        unsafe_allow_html=True)
 
     st.markdown(
         '<div style="background:#090C14;border:1px solid #1A2D4A;border-top:none;'
         'border-radius:0 0 8px 8px;padding:5px 12px;">', unsafe_allow_html=True)
-    new_ch = st.text_input(
-        "", value=ch, key=f"tw_{ch[:8]}",
-        placeholder="Canal Twitch (ex: baiano, lck, cblol)",
-        label_visibility="collapsed")
-    if new_ch.strip() and new_ch.strip() != ch:
-        st.session_state.twitch_custom = new_ch.strip(); st.rerun()
+    platform_key = f"video_platform_{match.get('lolesports_event_id') or match.get('panda_id') or t1[:4] + t2[:4]}"
+    stored_platform = st.session_state.get(platform_key, default_platform)
+    if stored_platform not in options:
+        stored_platform = default_platform
+    platform = st.selectbox(
+        "Plataforma",
+        options,
+        index=options.index(stored_platform),
+        key=platform_key,
+        label_visibility="collapsed",
+    )
+    value_key = f"video_value_{platform}_{match.get('lolesports_event_id') or match.get('panda_id') or t1[:4] + t2[:4]}"
+    default_value = _default_stream_value(platform, channel_or_code, match)
+    value = st.text_input(
+        "",
+        value=st.session_state.get(value_key, default_value),
+        key=value_key,
+        placeholder="Canal ou link da transmissão",
+        label_visibility="collapsed",
+    ).strip()
     st.markdown('</div>', unsafe_allow_html=True)
+
+    if platform == "SOOP":
+        channel = value or "afchall"
+        src = channel if channel.startswith("http") else f"https://play.sooplive.com/{channel}"
+        direct = src
+        _iframe_player(src, height)
+        st.link_button("Abrir SOOP em nova aba", direct, use_container_width=True)
+    elif platform == "YouTube":
+        embed_url, direct = _extract_youtube_embed(value)
+        if embed_url:
+            _iframe_player(embed_url, height)
+        else:
+            st.info("Cole o link do vídeo/live do YouTube ou o ID do vídeo para embutir aqui.")
+        if direct:
+            st.link_button("Abrir YouTube em nova aba", direct, use_container_width=True)
+    elif platform == "Kick":
+        channel = value.replace("https://kick.com/", "").replace("kick.com/", "").split("?")[0].strip("/")
+        if channel:
+            _iframe_player(f"https://player.kick.com/{channel}?autoplay=false", height)
+            st.link_button("Abrir Kick em nova aba", f"https://kick.com/{channel}", use_container_width=True)
+        else:
+            st.info("Informe o canal da Kick.")
+    elif platform == "Link externo":
+        if value.startswith("http"):
+            st.info("Esta plataforma pode bloquear iframe. Use o botão abaixo para abrir direto.")
+            st.link_button("Abrir transmissão", value, use_container_width=True)
+        else:
+            st.info("Cole o link completo da transmissão.")
+    else:
+        ch = _resolve_channel(value or channel_or_code)
+        _render_twitch_iframe(ch, height)
+        st.link_button("Abrir Twitch em nova aba", f"https://www.twitch.tv/{ch}", use_container_width=True)
+        st.session_state.twitch_custom = ch
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
 def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):

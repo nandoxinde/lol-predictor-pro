@@ -62,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "lolesports-live-stats-v12"
+DATA_VERSION = "multi-provider-video-v13"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
