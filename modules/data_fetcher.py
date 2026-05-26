@@ -21,7 +21,8 @@ from modules.odds_fetcher import OddsPapiClient
 TZ_BRT = timezone(timedelta(hours=-3))
 PANDA_BASE = "https://api.pandascore.co"
 PANDA_TOKEN = get_secret("PANDASCORE_TOKEN")
-LOLESPORTS_KEY = get_secret("LOLESPORTS_API_KEY")
+LOLESPORTS_DEFAULT_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
+LOLESPORTS_KEY = get_secret("LOLESPORTS_API_KEY") or LOLESPORTS_DEFAULT_KEY
 LEAGUEPEDIA_CACHE_TTL = 15 * 60
 _LEAGUEPEDIA_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
 
@@ -77,6 +78,7 @@ LEAGUE_INFO = {
     "tcl": {"name": "TCL", "display": "TCL", "tier": 2, "main": True},
     "pcs": {"name": "PCS/LCP", "display": "PCS/LCP", "tier": 2, "main": True},
     "ewc": {"name": "EWC", "display": "EWC", "tier": 1, "main": True},
+    "msi": {"name": "MSI", "display": "MSI 2026", "tier": 1, "main": True},
     "_unknown": {"name": "Torneio", "display": "Torneio", "tier": 2, "main": True},
 }
 LEAGUE_CONFIDENCE_CAP = {1: 1.0, 2: 0.9, 3: 0.78}
@@ -108,6 +110,7 @@ def league_from_text(text: str) -> str:
         ("pcs", "pcs"),
         ("lcp", "pcs"),
         ("ewc", "ewc"),
+        ("msi", "msi"),
     ]
     for needle, code in mapping:
         if needle in lower:
@@ -166,6 +169,7 @@ STREAM_CHANNELS = {
     "tcl": "tcl",
     "pcs": "riotgames",
     "ewc": "riotgames",
+    "msi": "riotgames",
     "_unknown": "riotgames",
 }
 
@@ -269,6 +273,16 @@ class DataFetcher:
     LQ_API = "https://lol.fandom.com/api.php"
     LQ_HEADERS = {"User-Agent": "LoLPredictorPro/2.0 (personal project)", "Accept-Encoding": "gzip"}
     LS_LIVE = "https://esports-api.lolesports.com/persisted/gw/getLive"
+    LS_SCHEDULE = "https://esports-api.lolesports.com/persisted/gw/getSchedule"
+    LS_LEAGUES = {
+        "msi": "98767991325878492",
+        "cblol": "98767991332355509",
+        "lck": "98767991310872058",
+        "lck_cl": "98767991335774713",
+        "lpl": "98767991314006698",
+        "lec": "98767991302996019",
+        "lcs": "98767991299243165",
+    }
 
     def __init__(self):
         self.panda = requests.Session()
@@ -298,6 +312,8 @@ class DataFetcher:
         for match in self._fetch_pandascore_running():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_lolesports_live():
+            self._append_unique(matches, seen, match, query_norm)
+        for match in self._fetch_lolesports_schedule():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_pandascore_upcoming():
             self._append_unique(matches, seen, match, query_norm)
@@ -507,6 +523,79 @@ class DataFetcher:
             return parsed
         except Exception:
             return []
+
+    def _fetch_lolesports_schedule(self) -> list[dict]:
+        if not LOLESPORTS_KEY:
+            return []
+
+        parsed: list[dict] = []
+        now = datetime.now(timezone.utc)
+
+        for code, league_id in self.LS_LEAGUES.items():
+            end = now + timedelta(days=50 if code == "msi" else 14)
+            try:
+                response = self.live.get(
+                    self.LS_SCHEDULE,
+                    params={"hl": "pt-BR", "leagueId": league_id},
+                    timeout=10,
+                )
+                if response.status_code != 200:
+                    continue
+
+                events = response.json().get("data", {}).get("schedule", {}).get("events", [])
+                for event in events:
+                    if event.get("type") != "match":
+                        continue
+                    state_raw = str(event.get("state", "")).lower()
+                    if state_raw == "completed":
+                        continue
+
+                    dt = parse_to_brt(event.get("startTime"))
+                    if not dt:
+                        continue
+                    dt_utc = dt.astimezone(timezone.utc)
+                    if dt_utc < now - timedelta(hours=5) or dt_utc > end:
+                        continue
+
+                    teams = event.get("match", {}).get("teams", [])
+                    if len(teams) < 2:
+                        continue
+
+                    t1 = fix_name(teams[0].get("name", ""))
+                    t2 = fix_name(teams[1].get("name", ""))
+                    if not t1 or not t2:
+                        continue
+                    if t1.lower() == "tbd" and t2.lower() == "tbd":
+                        if code != "msi":
+                            continue
+                        t1 = f"MSI Slot {len([m for m in parsed if m.get('league_code') == 'msi']) * 2 + 1}"
+                        t2 = f"MSI Slot {len([m for m in parsed if m.get('league_code') == 'msi']) * 2 + 2}"
+                    elif t1.lower() == t2.lower():
+                        continue
+
+                    state = "inProgress" if state_raw in ("inprogress", "in_progress", "live") else "unstarted"
+                    if code == "lpl" and not is_verified_lpl_match(t1, t2):
+                        # LPL schedules can briefly contain TBD slots. Keep named Chinese teams only.
+                        continue
+
+                    parsed.append(self._mk(
+                        t1,
+                        t2,
+                        code,
+                        get_league_info(code),
+                        dt,
+                        state,
+                        event.get("league", {}).get("name", get_league_info(code)["name"]),
+                        str(event.get("match", {}).get("strategy", {}).get("count") or 3),
+                        teams[0].get("image", ""),
+                        teams[1].get("image", ""),
+                        event.get("id"),
+                        "LoLEsports",
+                    ))
+            except Exception:
+                continue
+
+        return parsed
 
     def _fetch_leaguepedia_schedule(self, query: str = "") -> list[dict]:
         cache_key = query.strip().lower() or "__all__"

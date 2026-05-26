@@ -60,7 +60,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "verified-lpl-v7"
+DATA_VERSION = "official-lolesports-v8"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -407,16 +407,17 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
 
 def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
     priority = {
-        "lpl": 0,
-        "cblol": 1,
-        "lck": 2,
-        "lck_cl": 3,
-        "lec": 4,
-        "lcs": 5,
-        "ewc": 6,
-        "tcl": 7,
-        "vcs": 8,
-        "pcs": 9,
+        "msi": 0,
+        "lpl": 1,
+        "cblol": 2,
+        "lck": 3,
+        "lck_cl": 4,
+        "lec": 5,
+        "lcs": 6,
+        "ewc": 7,
+        "tcl": 8,
+        "vcs": 9,
+        "pcs": 10,
         "_unknown": 99,
     }
     live_matches = [match for match in matches if match.get("state") == "inProgress"]
@@ -458,14 +459,15 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
 
 def _priority_sort_key(match: dict) -> tuple:
     priority = {
-        "lpl": 0,
-        "cblol": 1,
-        "lck": 2,
-        "lck_cl": 3,
-        "ewc": 4,
-        "lec": 5,
-        "lcs": 6,
-        "tcl": 7,
+        "msi": 0,
+        "lpl": 1,
+        "cblol": 2,
+        "lck": 3,
+        "lck_cl": 4,
+        "ewc": 5,
+        "lec": 6,
+        "lcs": 7,
+        "tcl": 8,
         "_unknown": 99,
     }
     return (priority.get(match.get("league_code", "_unknown"), 50), match.get("datetime", ""))
@@ -733,6 +735,7 @@ with st.container():
     render_hero(live_count, next_count, source_summary or st.session_state.matches_source)
 
 LEAGUE_FILTERS = [
+    ("msi", "MSI"),
     ("cblol", "CBLOL"),
     ("cblol_acad", "CBLOL Academy"),
     ("lck", "LCK"),
