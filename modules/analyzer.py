@@ -27,6 +27,12 @@ class MatchAnalyzer:
 
         t1_form = t1_stats.get("form", {})
         t2_form = t2_stats.get("form", {})
+        series_memory = self.fetcher.fetch_series_memory(match)
+        t1_stats, t2_stats = self._apply_series_memory(
+            match["team1"], t1_stats,
+            match["team2"], t2_stats,
+            series_memory,
+        )
 
         predictions = []
         alerts = []
@@ -44,15 +50,15 @@ class MatchAnalyzer:
         if active_markets.get("First Blood"):
             pred = self._predict_first_event("First Blood",
                 match["team1"], t1_stats["first_blood_rate"],
-                match["team2"], t2_stats["first_blood_rate"])
-            if pred["confidence"] >= min_confidence:
+                match["team2"], t2_stats["first_blood_rate"], series_memory, "first_blood")
+            if pred["confidence"] >= max(52, min_confidence - 15):
                 predictions.append(pred)
 
         if active_markets.get("First Dragon"):
             pred = self._predict_first_event("First Dragon",
                 match["team1"], t1_stats["first_dragon_rate"],
-                match["team2"], t2_stats["first_dragon_rate"])
-            if pred["confidence"] >= min_confidence:
+                match["team2"], t2_stats["first_dragon_rate"], series_memory, "first_dragon")
+            if pred["confidence"] >= max(52, min_confidence - 15):
                 predictions.append(pred)
 
         if active_markets.get("First Baron"):
@@ -87,6 +93,8 @@ class MatchAnalyzer:
         warnings = []
         if t1_stats.get("source", "").startswith("Demo"):
             warnings.append("⚠️ Dados de demonstração (Oracle's Elixir offline). Probabilidades são estimadas.")
+        if series_memory.get("status") == "unavailable":
+            warnings.append(f"Memória de série indisponível: {series_memory.get('reason', 'sem dados detalhados')}.")
 
         return {
             "team1_stats": t1_stats,
@@ -97,7 +105,34 @@ class MatchAnalyzer:
             "alerts": alerts,
             "warnings": warnings,
             "analyst_comment": analyst_comment,
+            "series_memory": series_memory,
         }
+
+    def _apply_series_memory(self, t1_name: str, t1: dict, t2_name: str, t2: dict, memory: dict) -> tuple[dict, dict]:
+        t1_adj = dict(t1)
+        t2_adj = dict(t2)
+        if memory.get("status") != "ok" or memory.get("maps_played", 0) <= 0:
+            return t1_adj, t2_adj
+
+        momentum = memory.get("momentum", {})
+        mom_t1 = float(momentum.get("team1", 0.5))
+        mom_t2 = float(momentum.get("team2", 0.5))
+        event_rates = memory.get("event_rates", {})
+
+        for stat_key, memory_key in (("first_blood_rate", "first_blood"), ("first_dragon_rate", "first_dragon")):
+            rates = event_rates.get(memory_key, {})
+            live_t1 = float(rates.get("team1", 0.5))
+            live_t2 = float(rates.get("team2", 0.5))
+            t1_adj[stat_key] = float(np.clip(t1.get(stat_key, 0.5) * 0.68 + live_t1 * 0.24 + mom_t1 * 0.08, 0.25, 0.82))
+            t2_adj[stat_key] = float(np.clip(t2.get(stat_key, 0.5) * 0.68 + live_t2 * 0.24 + mom_t2 * 0.08, 0.25, 0.82))
+
+        t1_adj["winrate"] = float(np.clip(t1.get("winrate", 0.5) + (mom_t1 - 0.5) * 0.10, 0.2, 0.9))
+        t2_adj["winrate"] = float(np.clip(t2.get("winrate", 0.5) + (mom_t2 - 0.5) * 0.10, 0.2, 0.9))
+        t1_adj["source"] = f'{t1.get("source", "Modelo")} + memória série'
+        t2_adj["source"] = f'{t2.get("source", "Modelo")} + memória série'
+        t1_adj["series_momentum"] = mom_t1
+        t2_adj["series_momentum"] = mom_t2
+        return t1_adj, t2_adj
 
     def _predict_winner(self, t1_name, t1, t2_name, t2):
         wr_weight, gd15_weight, kills_weight = 0.50, 0.25, 0.15
@@ -119,21 +154,34 @@ class MatchAnalyzer:
         )
         return {"market": "Vitória (Moneyline)", "suggestion": f"🏆 {favored} Vence",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
+                "fair_odds": round(1 / max(prob, 0.01), 2),
                 "reason": reason, "icon": "🏆"}
 
-    def _predict_first_event(self, event_name, t1_name, t1_rate, t2_name, t2_rate):
+    def _predict_first_event(self, event_name, t1_name, t1_rate, t2_name, t2_rate, series_memory=None, memory_key=""):
         total = t1_rate + t2_rate
         prob_t1 = t1_rate / total if total > 0 else 0.5
         favored = t1_name if prob_t1 >= 0.5 else t2_name
         prob = prob_t1 if prob_t1 >= 0.5 else (1 - prob_t1)
         confidence = prob * 100
         icons = {"First Blood": "🗡️", "First Dragon": "🐉", "First Baron": "👑"}
+        memory_note = ""
+        if series_memory and series_memory.get("status") == "ok" and memory_key:
+            last = series_memory.get("last_map", {})
+            last_owner = last.get(memory_key)
+            if last_owner:
+                owner_name = t1_name if last_owner == "team1" else t2_name
+                memory_note = f" Último mapa: {owner_name} levou {event_name}."
         reason = (
             f"{favored} obtém {event_name} em {t1_rate*100:.0f}% dos jogos "
-            f"vs {t2_name} em {t2_rate*100:.0f}%."
+            f"vs {t2_name} em {t2_rate*100:.0f}%.{memory_note}"
         )
         return {"market": event_name, "suggestion": f"{icons.get(event_name,'📌')} {event_name} → {favored}",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
+                "fair_odds": round(1 / max(prob, 0.01), 2),
+                "side_probabilities": {
+                    t1_name: round(prob_t1, 3),
+                    t2_name: round(1 - prob_t1, 3),
+                },
                 "reason": reason, "icon": icons.get(event_name, "📌")}
 
     def _predict_total_kills(self, t1, t2):
@@ -150,6 +198,7 @@ class MatchAnalyzer:
         )
         return {"market": f"Total Kills {direction} {line}", "suggestion": f"🎯 {direction} {line} Kills",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
+                "fair_odds": round(1 / max(prob, 0.01), 2),
                 "reason": reason, "icon": "🎯"}
 
     def _predict_game_duration(self, t1, t2):
@@ -164,6 +213,7 @@ class MatchAnalyzer:
         )
         return {"market": "Duração do Mapa", "suggestion": f"⏱️ Jogo {direction}",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
+                "fair_odds": round(1 / max(prob, 0.01), 2),
                 "reason": reason, "icon": "⏱️"}
 
     def _predict_gold_diff(self, t1_name, t1, t2_name, t2):
@@ -179,6 +229,7 @@ class MatchAnalyzer:
         )
         return {"market": "Gold Diff @15min", "suggestion": f"💰 {favored} lidera @15min",
                 "confidence": round(confidence, 1), "probability": round(prob, 3),
+                "fair_odds": round(1 / max(prob, 0.01), 2),
                 "reason": reason, "icon": "💰"}
 
     @staticmethod

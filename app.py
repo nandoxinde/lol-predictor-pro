@@ -62,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "multi-provider-video-v13"
+DATA_VERSION = "series-memory-odds-v14"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()

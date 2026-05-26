@@ -633,6 +633,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     _render_lolesports_live_stats(match, live_stats or {})
     if live_stats:
         st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
+    _render_series_memory(analysis, t1, t2)
 
     # Stats + Rosters
     cs, cr = st.columns(2)
@@ -715,6 +716,36 @@ def _render_lolesports_live_stats(match: dict, live_stats: dict) -> None:
 
     render_side(blue_col, blue_name, blue, "#1565C0")
     render_side(red_col, red_name, red, "#F59E0B")
+
+
+def _render_series_memory(analysis: dict, t1: str, t2: str) -> None:
+    memory = analysis.get("series_memory") or {}
+    if memory.get("status") != "ok":
+        return
+
+    score = memory.get("series_score", {})
+    momentum = memory.get("momentum", {})
+    last = memory.get("last_map", {})
+    totals = memory.get("totals", {})
+    dragons = totals.get("dragons", {})
+    kills = totals.get("kills", {})
+
+    st.markdown(
+        f'<div style="background:#090C14;border:1px solid #F59E0B55;border-radius:10px;'
+        f'padding:10px 12px;margin-bottom:10px;">'
+        f'<div style="font-size:12px;font-weight:900;color:#F59E0B;margin-bottom:6px;">'
+        f'🧠 Memória dinâmica da série · {memory.get("maps_played", 0)} mapa(s) jogado(s)</div>'
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;">'
+        f'<div><b>{score.get("team1",0)} x {score.get("team2",0)}</b><br><span>Série</span></div>'
+        f'<div><b>{momentum.get("team1",0.5)*100:.0f}% / {momentum.get("team2",0.5)*100:.0f}%</b><br><span>Momentum</span></div>'
+        f'<div><b>{kills.get("team1",0)} / {kills.get("team2",0)}</b><br><span>Abates</span></div>'
+        f'<div><b>{dragons.get("team1",0)} / {dragons.get("team2",0)}</b><br><span>Dragões</span></div>'
+        f'</div>'
+        f'<div style="font-size:10px;color:#5A7090;margin-top:6px;">'
+        f'Último mapa: FB {last.get("first_blood") or "-"} · FD {last.get("first_dragon") or "-"} · '
+        f'{t1} vs {t2}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 # ─── Player / Transmissões ─────────────────────────────────────────────
 _TWITCH_CHANNELS = {
@@ -957,7 +988,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
             f'padding:10px 14px;text-align:center;">'
             f'<div style="font-size:22px;font-weight:800;color:#F59E0B;">'
             f'R$ {si["stake"]:.2f}</div>'
-            f'<div style="font-size:9px;color:#3A4D65;">{si["stake_pct"]}% da banca</div>'
+            f'<div style="font-size:9px;color:#3A4D65;">{si["stake_pct"]}% da banca · Odd justa {top.get("fair_odds", 1/top["probability"]):.2f}</div>'
             f'</div></div></div>', unsafe_allow_html=True)
 
         if si["stake"] > bankroll * 0.10:
@@ -995,7 +1026,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:26]}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:20]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
         with c2:
@@ -1011,7 +1042,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:26]}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:20]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
 
@@ -1026,7 +1057,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
         sel  = st.selectbox("", [p["market"] for p in preds],
                              key="oc_sel", label_visibility="collapsed")
         pred = next((p for p in preds if p["market"]==sel), preds[0])
-        fp   = pred["probability"]; fo = round(1/fp, 2)
+        fp   = pred["probability"]; fo = pred.get("fair_odds", round(1/fp, 2))
         ho   = st.number_input("Odd da casa:", min_value=1.01, value=fo,
                                 step=0.05, key="oc_inp", label_visibility="collapsed")
         ev   = (fp*ho) - 1

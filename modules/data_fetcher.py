@@ -27,6 +27,8 @@ LOLESPORTS_DEFAULT_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
 LOLESPORTS_KEY = get_secret("LOLESPORTS_API_KEY") or LOLESPORTS_DEFAULT_KEY
 LEAGUEPEDIA_CACHE_TTL = 15 * 60
 _LEAGUEPEDIA_CACHE: dict[str, tuple[datetime, list[dict]]] = {}
+SERIES_MEMORY_CACHE_TTL = 60
+_SERIES_MEMORY_CACHE: dict[str, tuple[datetime, dict]] = {}
 
 
 def now_brt() -> datetime:
@@ -256,6 +258,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll):
             "entry": f"{fav} vence",
             "confidence": round(prob * 100, 1),
             "probability": prob,
+            "fair_odds": round(1 / max(prob, 0.01), 2),
             "icon": "🏆",
             "category": "segura",
         })
@@ -266,6 +269,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll):
         "entry": "Jogo passa de 27 minutos",
         "confidence": round(p27 * 100, 1),
         "probability": p27,
+        "fair_odds": round(1 / max(p27, 0.01), 2),
         "icon": "⏱",
         "category": "segura",
     })
@@ -276,6 +280,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll):
         "entry": "Jogo passa de 30 minutos",
         "confidence": round(p30 * 100, 1),
         "probability": p30,
+        "fair_odds": round(1 / max(p30, 0.01), 2),
         "icon": "⌛",
         "category": "segura" if p30 >= 0.63 else "risco",
     })
@@ -287,8 +292,21 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll):
         "entry": f"{fb_team} primeiro abate",
         "confidence": round(fb_prob * 100, 1),
         "probability": fb_prob,
+        "fair_odds": round(1 / max(fb_prob, 0.01), 2),
         "icon": "🩸",
         "category": "risco",
+    })
+
+    fd_team = t1n if t1s.get("first_dragon_rate", .5) >= t2s.get("first_dragon_rate", .5) else t2n
+    fd_prob = min(0.84, max(t1s.get("first_dragon_rate", .5), t2s.get("first_dragon_rate", .5)))
+    decisions.append({
+        "market": f"First Dragon — {fd_team}",
+        "entry": f"{fd_team} primeiro dragão",
+        "confidence": round(fd_prob * 100, 1),
+        "probability": fd_prob,
+        "fair_odds": round(1 / max(fd_prob, 0.01), 2),
+        "icon": "🐉",
+        "category": "risco" if fd_prob < 0.70 else "segura",
     })
 
     decisions.sort(key=lambda item: item["confidence"], reverse=True)
@@ -458,6 +476,281 @@ class DataFetcher:
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
 
+    def fetch_series_memory(self, match: dict) -> dict:
+        """Build short-lived momentum memory for MD3/MD5 series."""
+        best_of = int(str(match.get("best_of") or "1").split(".")[0] or 1)
+        if best_of < 3:
+            return {"status": "disabled", "reason": "Série MD1"}
+
+        is_pandascore = match.get("source") == "PandaScore" and bool(match.get("panda_id"))
+        cache_key = (
+            f"panda:{match.get('panda_id')}"
+            if is_pandascore
+            else f"lolesports:{match.get('lolesports_event_id') or match.get('lolesports_game_id')}"
+        )
+        cached = _SERIES_MEMORY_CACHE.get(cache_key)
+        if cached:
+            cached_at, data = cached
+            if (datetime.now(timezone.utc) - cached_at).total_seconds() < SERIES_MEMORY_CACHE_TTL:
+                return dict(data)
+
+        if is_pandascore:
+            data = self._fetch_pandascore_series_memory(match)
+        else:
+            data = {"status": "unavailable", "source": "PandaScore", "reason": "Match sem ID PandaScore"}
+
+        _SERIES_MEMORY_CACHE[cache_key] = (datetime.now(timezone.utc), dict(data))
+        return data
+
+    def _fetch_pandascore_series_memory(self, match: dict) -> dict:
+        if not PANDA_TOKEN:
+            return {"status": "unavailable", "source": "PandaScore", "reason": "Token PandaScore ausente"}
+
+        try:
+            response = self.panda.get(
+                f"{PANDA_BASE}/lol/matches/{match.get('panda_id')}/games",
+                params={"page[size]": 10},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                return {
+                    "status": "unavailable",
+                    "source": "PandaScore",
+                    "reason": f"Games indisponíveis ({response.status_code})",
+                }
+            games = response.json() or []
+        except Exception as exc:
+            return {"status": "error", "source": "PandaScore", "reason": str(exc)}
+
+        team1 = match.get("team1", "")
+        team2 = match.get("team2", "")
+        team1_id = match.get("panda_team1_id")
+        team2_id = match.get("panda_team2_id")
+        completed = [game for game in games if self._is_completed_game(game)]
+        completed.sort(key=lambda game: game.get("position") or game.get("number") or game.get("id") or 0)
+
+        if not completed:
+            return {
+                "status": "empty",
+                "source": "PandaScore",
+                "maps_played": 0,
+                "reason": "Nenhum mapa finalizado na série ainda",
+            }
+
+        maps = [
+            self._summarize_pandascore_game(game, team1, team2, team1_id, team2_id)
+            for game in completed
+        ]
+        maps = [m for m in maps if m]
+        if not maps:
+            return {"status": "empty", "source": "PandaScore", "maps_played": 0}
+
+        score = {
+            "team1": sum(1 for item in maps if item.get("winner") == "team1"),
+            "team2": sum(1 for item in maps if item.get("winner") == "team2"),
+        }
+        fb = {
+            "team1": sum(1 for item in maps if item.get("first_blood") == "team1"),
+            "team2": sum(1 for item in maps if item.get("first_blood") == "team2"),
+        }
+        fd = {
+            "team1": sum(1 for item in maps if item.get("first_dragon") == "team1"),
+            "team2": sum(1 for item in maps if item.get("first_dragon") == "team2"),
+        }
+        dragons = {
+            "team1": sum(int(item.get("dragons", {}).get("team1", 0)) for item in maps),
+            "team2": sum(int(item.get("dragons", {}).get("team2", 0)) for item in maps),
+        }
+        kills = {
+            "team1": sum(int(item.get("kills", {}).get("team1", 0)) for item in maps),
+            "team2": sum(int(item.get("kills", {}).get("team2", 0)) for item in maps),
+        }
+        last = maps[-1]
+        momentum_raw = (
+            (kills["team1"] - kills["team2"]) * 0.025
+            + (dragons["team1"] - dragons["team2"]) * 0.12
+            + (1 if last.get("winner") == "team1" else -1 if last.get("winner") == "team2" else 0) * 0.16
+            + (1 if last.get("first_dragon") == "team1" else -1 if last.get("first_dragon") == "team2" else 0) * 0.10
+        )
+        momentum_t1 = float(np.clip(0.5 + momentum_raw, 0.18, 0.82))
+
+        return {
+            "status": "ok",
+            "source": "PandaScore",
+            "maps_played": len(maps),
+            "series_score": score,
+            "event_rates": {
+                "first_blood": self._event_rate(fb, len(maps)),
+                "first_dragon": self._event_rate(fd, len(maps)),
+            },
+            "totals": {"dragons": dragons, "kills": kills},
+            "momentum": {"team1": momentum_t1, "team2": 1 - momentum_t1},
+            "last_map": last,
+            "maps": maps,
+            "draft": self._extract_draft_from_game(last.get("raw", {}), team1, team2, team1_id, team2_id),
+        }
+
+    @staticmethod
+    def _event_rate(counts: dict, total: int) -> dict:
+        if total <= 0:
+            return {"team1": 0.5, "team2": 0.5}
+        # Beta smoothing avoids turning one map into a false 100% lock.
+        t1 = (counts.get("team1", 0) + 1) / (total + 2)
+        t2 = (counts.get("team2", 0) + 1) / (total + 2)
+        return {"team1": t1, "team2": t2}
+
+    @staticmethod
+    def _is_completed_game(game: dict) -> bool:
+        status = str(game.get("status") or game.get("state") or "").lower()
+        return status in {"finished", "completed", "complete"} or bool(game.get("finished") or game.get("winner"))
+
+    def _summarize_pandascore_game(self, game: dict, team1: str, team2: str, team1_id=None, team2_id=None) -> dict:
+        game_id = game.get("id")
+        events = self._fetch_pandascore_game_feed(game_id, "events")
+        frames = self._fetch_pandascore_game_feed(game_id, "frames")
+        kills = self._count_events_by_team(events, ("kill", "champion_kill"), team1, team2, team1_id, team2_id)
+        dragons = self._count_events_by_team(events, ("dragon", "drake"), team1, team2, team1_id, team2_id)
+        winner_obj = game.get("winner") or game.get("winner_team")
+        winner = self._team_side_from_object(winner_obj, team1, team2, team1_id, team2_id) if winner_obj else None
+        first_blood = self._first_event_team(events, ("kill", "champion_kill"), team1, team2, team1_id, team2_id)
+        first_dragon = self._first_event_team(events, ("dragon", "drake"), team1, team2, team1_id, team2_id)
+        if frames:
+            frame_summary = self._summarize_final_frame(frames[-1], team1, team2, team1_id, team2_id)
+            kills = frame_summary.get("kills") or kills
+            dragons = frame_summary.get("dragons") or dragons
+
+        return {
+            "game_id": game_id,
+            "number": game.get("position") or game.get("number"),
+            "winner": winner,
+            "first_blood": first_blood,
+            "first_dragon": first_dragon,
+            "kills": kills,
+            "dragons": dragons,
+            "raw": game,
+        }
+
+    def _fetch_pandascore_game_feed(self, game_id, feed: str) -> list:
+        if not game_id:
+            return []
+        try:
+            response = self.panda.get(f"{PANDA_BASE}/lol/games/{game_id}/{feed}", params={"page[size]": 200}, timeout=10)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def _first_event_team(self, events: list, needles: tuple[str, ...], team1: str, team2: str, team1_id=None, team2_id=None) -> str | None:
+        for event in events:
+            text = str(event.get("type") or event.get("event_type") or event.get("name") or "").lower()
+            blob = str(event).lower()
+            if any(needle in text or needle in blob for needle in needles):
+                side = self._team_side_from_object(event, team1, team2, team1_id, team2_id)
+                if side:
+                    return side
+        return None
+
+    def _count_events_by_team(self, events: list, needles: tuple[str, ...], team1: str, team2: str, team1_id=None, team2_id=None) -> dict:
+        counts = {"team1": 0, "team2": 0}
+        for event in events:
+            text = str(event.get("type") or event.get("event_type") or event.get("name") or "").lower()
+            blob = str(event).lower()
+            if not any(needle in text or needle in blob for needle in needles):
+                continue
+            side = self._team_side_from_object(event, team1, team2, team1_id, team2_id)
+            if side:
+                counts[side] += 1
+        return counts
+
+    def _summarize_final_frame(self, frame: dict, team1: str, team2: str, team1_id=None, team2_id=None) -> dict:
+        result = {"kills": None, "dragons": None}
+        team_dicts = [obj for obj in self._walk_dicts(frame) if self._team_side_from_object(obj, team1, team2, team1_id, team2_id)]
+        if not team_dicts:
+            return result
+        kills = {"team1": 0, "team2": 0}
+        dragons = {"team1": 0, "team2": 0}
+        found_kills = found_dragons = False
+        for obj in team_dicts:
+            side = self._team_side_from_object(obj, team1, team2, team1_id, team2_id)
+            if not side:
+                continue
+            if obj.get("kills") is not None or obj.get("totalKills") is not None:
+                kills[side] = int(obj.get("kills") or obj.get("totalKills") or 0)
+                found_kills = True
+            if obj.get("dragons") is not None or obj.get("drakes") is not None:
+                value = obj.get("dragons", obj.get("drakes", 0))
+                dragons[side] = len(value) if isinstance(value, list) else int(value or 0)
+                found_dragons = True
+        result["kills"] = kills if found_kills else None
+        result["dragons"] = dragons if found_dragons else None
+        return result
+
+    def _team_side_from_object(self, obj, team1: str, team2: str, team1_id=None, team2_id=None) -> str | None:
+        if not obj:
+            return None
+        if isinstance(obj, dict):
+            for key in (
+                "winner_id", "team_id", "killer_team_id", "scorer_team_id",
+                "dragon_killer_team_id", "owner_team_id",
+            ):
+                value = obj.get(key)
+                if value is not None:
+                    if team1_id is not None and str(value) == str(team1_id):
+                        return "team1"
+                    if team2_id is not None and str(value) == str(team2_id):
+                        return "team2"
+            for key in ("winner", "winner_team", "team", "killer_team", "scorer_team", "owner_team"):
+                if key in obj:
+                    side = self._team_side_from_object(obj.get(key), team1, team2, team1_id, team2_id)
+                    if side:
+                        return side
+        if self._mentions_team(obj, team1, team1_id):
+            return "team1"
+        if self._mentions_team(obj, team2, team2_id):
+            return "team2"
+        return None
+
+    def _mentions_team(self, obj, team: str, team_id=None) -> bool:
+        team_norm = _team_key(team)
+        for value in self._walk_values(obj):
+            if team_id is not None and str(value) == str(team_id):
+                return True
+            if isinstance(value, str) and team_norm and _team_key(value) == team_norm:
+                return True
+        return False
+
+    def _extract_draft_from_game(self, game: dict, team1: str, team2: str, team1_id=None, team2_id=None) -> dict:
+        draft = {"team1": [], "team2": []}
+        for obj in self._walk_dicts(game):
+            champion = obj.get("champion") or obj.get("champion_name") or obj.get("championId") or obj.get("champion_id")
+            if not champion:
+                continue
+            side = self._team_side_from_object(obj, team1, team2, team1_id, team2_id)
+            if side and str(champion) not in draft[side]:
+                draft[side].append(str(champion))
+        return draft
+
+    def _walk_dicts(self, obj):
+        if isinstance(obj, dict):
+            yield obj
+            for value in obj.values():
+                yield from self._walk_dicts(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from self._walk_dicts(item)
+
+    def _walk_values(self, obj):
+        if isinstance(obj, dict):
+            for value in obj.values():
+                yield from self._walk_values(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from self._walk_values(item)
+        else:
+            yield obj
+
     def _append_unique(self, matches: list, seen: set, match: dict | None, query: str) -> None:
         if not match:
             return
@@ -621,7 +914,7 @@ class DataFetcher:
         if code == "lpl" and not is_verified_lpl_match(t1, t2):
             code = "_unknown"
         info = get_league_info(code)
-        return self._mk(
+        item = self._mk(
             t1,
             t2,
             code,
@@ -635,6 +928,10 @@ class DataFetcher:
             raw.get("id"),
             "PandaScore",
         )
+        item["panda_team1_id"] = o1.get("id")
+        item["panda_team2_id"] = o2.get("id")
+        item["panda_slug"] = raw.get("slug", "")
+        return item
 
     def _fetch_lolesports_live(self) -> list[dict]:
         if not LOLESPORTS_KEY:
