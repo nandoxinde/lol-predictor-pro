@@ -62,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "split-sources-logos-twitch-v9"
+DATA_VERSION = "lolesports-agenda-only-v10"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()

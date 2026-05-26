@@ -1,9 +1,9 @@
 """Data layer for LoL Predictor.
 
 Sources:
-- PandaScore for real running/upcoming matches and team images.
-- LoLEsports for additional validated live events when configured.
-- Leaguepedia/Fandom Cargo as a cached schedule fallback. It never marks games live.
+- LoLEsports for official schedule, live status, and team logos.
+- OddsPapi is used by the app only for odds enrichment.
+- PandaScore and Leaguepedia helpers are kept for manual diagnostics, not the main agenda.
 """
 
 from __future__ import annotations
@@ -344,27 +344,17 @@ class DataFetcher:
         seen: set[str] = set()
         query_norm = query.strip().lower()
 
-        for match in self._fetch_pandascore_running():
-            self._append_unique(matches, seen, match, query_norm)
+        # Agenda/live/logos come from LoLEsports only. This avoids false live
+        # states and duplicated games from odds providers.
         for match in self._fetch_lolesports_live():
             self._append_unique(matches, seen, match, query_norm)
         for match in self._fetch_lolesports_schedule():
             self._append_unique(matches, seen, match, query_norm)
-        for match in self._fetch_pandascore_upcoming():
-            self._append_unique(matches, seen, match, query_norm)
-        for match in self._fetch_oddspapi_schedule():
-            self._append_unique(matches, seen, match, query_norm)
-
-        # Leaguepedia is useful but rate-limited. Use it only when the other
-        # sources did not provide enough context or when the user searches.
-        if query_norm or len(matches) < 8:
-            for match in self._fetch_leaguepedia_schedule(query):
-                self._append_unique(matches, seen, match, query_norm)
 
         self._enrich_logos_from_lolesports(matches)
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
         if matches:
-            return matches, "real"
+            return matches, "LoLEsports"
         return self._demo_matches(query), "demo"
 
     def _append_unique(self, matches: list, seen: set, match: dict | None, query: str) -> None:
