@@ -32,7 +32,6 @@ from modules.ui_components import (
     render_coupon_panel,
     render_header,
     render_hero,
-    render_league_sidebar,
     render_match_list,
     render_operation_room,
     render_sidebar_navigation,
@@ -385,6 +384,35 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
                     _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
 
 
+def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dict[str, int], current: str) -> None:
+    """Menu lateral compacto para não poluir a área de jogos."""
+    total = sum(counts.values())
+    visible_leagues = [(code, label, counts.get(code, 0)) for code, label in leagues if counts.get(code, 0) > 0]
+
+    with st.sidebar:
+        st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+        with st.expander("☰ Escolher liga", expanded=False):
+            if st.button(
+                f"Todos os jogos ({total})",
+                key="hamburger_league_all",
+                use_container_width=True,
+                type="primary" if current == "all" else "secondary",
+            ):
+                st.session_state.league_filter = "all"
+                st.rerun()
+
+            for code, label, count in visible_leagues:
+                suffix = "jogo" if count == 1 else "jogos"
+                if st.button(
+                    f"{label} ({count} {suffix})",
+                    key=f"hamburger_league_{code}",
+                    use_container_width=True,
+                    type="primary" if current == code else "secondary",
+                ):
+                    st.session_state.league_filter = code
+                    st.rerun()
+
+
 profile = st.session_state.get("profile") or _load_profile()
 display_name = profile.get("display_name", "Fernando")
 banca_ini = float(st.session_state.banca_ini)
@@ -576,6 +604,8 @@ for match in all_matches:
     code = match.get("league_code", "_unknown")
     league_counts[code] = league_counts.get(code, 0) + 1
 
+_render_sidebar_league_hamburger(LEAGUE_FILTERS, league_counts, st.session_state.league_filter)
+
 top_a, top_b, top_c = st.columns(3)
 with top_a:
     st.markdown(
@@ -596,10 +626,7 @@ with top_c:
         unsafe_allow_html=True,
     )
 
-side_col, main_col, coupon_col = st.columns([1.15, 4.7, 1.55], gap="medium")
-
-with side_col:
-    render_league_sidebar(LEAGUE_FILTERS, league_counts, st.session_state.league_filter)
+main_col, coupon_col = st.columns([5.2, 1.35], gap="medium")
 
 with main_col:
     st.markdown(
