@@ -419,6 +419,9 @@ def _positive_stat(stats: dict, key: str, fallback: float) -> float:
     if key == "avg_dragons":
         first_dragon = _positive_stat(stats, "first_dragon_rate", 0.5)
         return round(1.4 + first_dragon * 2.0, 1)
+    if key == "avg_barons":
+        winrate = _positive_stat(stats, "winrate", 0.5)
+        return round(0.35 + winrate * 0.75, 1)
 
     return fallback
 
@@ -426,21 +429,27 @@ def _positive_stat(stats: dict, key: str, fallback: float) -> float:
 def _render_logo_or_fallback(match: dict, team_name: str, index: int) -> None:
     logo = _logo_url(match, index)
     initials = escape(team_name[:2].upper() or "??")
+    fallback_style = (
+        "width:50px;height:50px;border-radius:12px;margin:0 auto 8px;"
+        "align-items:center;justify-content:center;background:transparent;"
+        "border:1px solid rgba(200,155,60,.45);color:#F7E7B2;"
+        "font-size:16px;font-weight:900;"
+    )
     if logo:
         st.markdown(
             f'''
-            <div style="position:relative;width:88px;height:88px;margin:0 auto 8px;">
+            <div style="position:relative;width:70px;height:62px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;">
               <img src="{escape(logo)}" loading="lazy"
                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
-                   style="width:88px;height:88px;object-fit:contain;border-radius:18px;display:block;" />
-              <div class="premium-logo-fallback" style="display:none;margin:0;">{initials}</div>
+                   style="width:50px;height:50px;object-fit:contain;border-radius:12px;display:block;background:transparent;" />
+              <div class="premium-logo-fallback" style="display:none;{fallback_style}">{initials}</div>
             </div>
             ''',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            f'<div class="premium-logo-fallback">{initials}</div>',
+            f'<div class="premium-logo-fallback" style="display:flex;{fallback_style}">{initials}</div>',
             unsafe_allow_html=True,
         )
 
@@ -696,6 +705,7 @@ if st.session_state.aba == "stats_t1_dk":
                 "Duração média": f"{_positive_stat(stats, 'avg_game_length', 31.5):.1f} min",
                 "Torres/jogo": f"{_positive_stat(stats, 'avg_towers', 6.4):.1f}",
                 "Dragões/jogo": f"{_positive_stat(stats, 'avg_dragons', 2.4):.1f}",
+                "Barons/jogo": f"{_positive_stat(stats, 'avg_barons', 0.8):.1f}",
                 "First Blood": f"{_positive_stat(stats, 'first_blood_rate', 0.5) * 100:.0f}%",
                 "First Dragon": f"{_positive_stat(stats, 'first_dragon_rate', 0.5) * 100:.0f}%",
             })
@@ -714,6 +724,7 @@ if st.session_state.aba == "stats_t1_dk":
             "Duração média",
             "Torres/jogo",
             "Dragões/jogo",
+            "Barons/jogo",
             "First Blood",
             "First Dragon",
         ]

@@ -18,6 +18,7 @@ import numpy as np
 import requests
 
 from modules.config import get_secret
+from modules.my_private_api import query_team_stats
 from modules.odds_fetcher import OddsPapiClient
 
 TZ_BRT = timezone(timedelta(hours=-3))
@@ -1413,6 +1414,16 @@ class DataFetcher:
         return numeric / 60 if numeric > 90 else numeric
 
     def _estimate_stats(self, name: str, league_code: str) -> dict:
+        local_stats = query_team_stats(name, league_code)
+        if local_stats:
+            tier = self.resolve_tier(local_stats.get("team_name", name))
+            return {
+                **local_stats,
+                "tier": tier,
+                "first_blood_rate": 0.5,
+                "avg_golddiff15": 0.0,
+            }
+
         tier = self.resolve_tier(name)
         profile = TIER_PROFILE[tier]
         seed = sum(ord(char) for char in f"{name}{league_code}".lower())

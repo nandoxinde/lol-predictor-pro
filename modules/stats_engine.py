@@ -9,6 +9,8 @@ import requests
 import streamlit as st
 from datetime import datetime, timedelta
 
+from modules.my_private_api import query_team_stats
+
 ROLES = ["Top", "Jungle", "Mid", "ADC", "Support"]
 
 CHAMPS_BY_ROLE = {
@@ -58,6 +60,22 @@ CURRENT_ROSTERS = {
 
 def _seed(name: str, extra: str = "") -> int:
     return sum(ord(c) for c in (name + extra).lower())
+
+
+def get_team_stats(team_name: str, league_code: str = "", last_n: int = 15) -> dict:
+    """Read real team aggregates from the local SQLite stats API."""
+    return _estimate_stats(team_name, league_code, last_n)
+
+
+def _estimate_stats(team_name: str, league_code: str = "", last_n: int = 15) -> dict:
+    stats = query_team_stats(team_name, league_code)
+    if not stats:
+        return {}
+    return {
+        **stats,
+        "games_analyzed": min(int(stats.get("games_analyzed", last_n) or last_n), last_n),
+        "source": stats.get("source", "Oracle's Elixir SQLite"),
+    }
 
 
 # ── Scraping Liquipedia ───────────────────────────────────────────────────────

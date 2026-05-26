@@ -1003,6 +1003,9 @@ def _positive_stat(stats: dict, key: str, fallback: float) -> float:
     if key == "avg_dragons":
         first_dragon = _positive_stat(stats, "first_dragon_rate", 0.5)
         return round(1.4 + first_dragon * 2.0, 1)
+    if key == "avg_barons":
+        winrate = _positive_stat(stats, "winrate", 0.5)
+        return round(0.35 + winrate * 0.75, 1)
 
     return fallback
 
@@ -1014,6 +1017,7 @@ def _render_stats(t1n, t1, t2n, t2):
         ("Duração média",   "avg_game_length",   False, "{:.1f}min", 31.5),
         ("Torres/jogo",     "avg_towers",        True,  "{:.1f}",   6.4),
         ("Dragões/jogo",    "avg_dragons",       True,  "{:.1f}",   2.4),
+        ("Barons/jogo",     "avg_barons",        True,  "{:.1f}",   0.8),
         ("First Blood",     "first_blood_rate",  True,  "{:.0%}",   0.5),
         ("First Dragon",    "first_dragon_rate", True,  "{:.0%}",   0.5),
     ]
