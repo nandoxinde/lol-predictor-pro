@@ -25,7 +25,12 @@ from modules.auth import (
     render_profile_settings,
     sync_banca_to_profile,
 )
-from modules.bankroll import BankrollManager
+from modules.bankroll import (
+    BankrollManager,
+    pending_exposure,
+    register_pending_bet,
+    settle_pending_bets,
+)
 from modules.data_fetcher import DataFetcher, LEAGUE_CONFIDENCE_CAP, now_brt
 from modules.odds_fetcher import OddsPapiClient, odds_pair_key
 from modules.stats_engine import get_roster
@@ -102,6 +107,41 @@ def _save_history(history: list[dict]) -> None:
 def _calc_bankroll(history: list[dict], initial: float) -> float:
     profit = sum(float(item.get("profit", 0) or 0) for item in history if isinstance(item, dict))
     return round(initial + profit, 2)
+
+
+def _available_bankroll(balance: float, history: list[dict]) -> float:
+    return round(max(0.0, float(balance) - pending_exposure(history)), 2)
+
+
+def _register_pending_from_click(match: dict, pick: dict, stake_info: dict, odds: float, bet_url: str) -> tuple[bool, str]:
+    if float(stake_info.get("stake", 0) or 0) <= 0:
+        return False, "Stake calculada zerada. Ajuste a banca/odd antes de registrar."
+    history_now = _load_history()
+    updated, bet, created = register_pending_bet(history_now, match, pick, stake_info, odds, bet_url)
+    _save_history(updated)
+    st.session_state.last_bet_history_update = now_brt().isoformat()
+    stake = float(bet.get("stake", 0) or 0)
+    if created:
+        return True, f"Aposta registrada como Pendente. Exposição: R$ {stake:.2f}."
+    return False, "Essa aposta já está registrada como Pendente."
+
+
+def _auto_settle_pending_bets(matches: list[dict], current_balance: float) -> tuple[list[dict], float, list[dict]]:
+    history_now = _load_history()
+    updated, balance_delta, settled = settle_pending_bets(history_now, matches)
+    if not settled:
+        return history_now, current_balance, []
+
+    _save_history(updated)
+    new_balance = round(max(0.0, float(current_balance) + balance_delta), 2)
+    st.session_state.banca_atual_sync = new_balance
+    sync_banca_to_profile(
+        float(st.session_state.banca_ini),
+        float(st.session_state.banca_meta),
+        new_balance,
+    )
+    st.session_state.last_bet_history_update = now_brt().isoformat()
+    return updated, new_balance, settled
 
 
 def _minute_key() -> str:
@@ -454,7 +494,13 @@ def _render_logo_or_fallback(match: dict, team_name: str, index: int) -> None:
         )
 
 
-def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> None:
+def _render_premium_match_card(
+    match: dict,
+    analysis: dict,
+    card_key: str,
+    bankroll_mgr: BankrollManager | None = None,
+    on_bet_click=None,
+) -> None:
     t1 = match.get("team1", "Time 1")
     t2 = match.get("team2", "Time 2")
     is_live = match.get("state") == "inProgress"
@@ -507,9 +553,23 @@ def _render_premium_match_card(match: dict, analysis: dict, card_key: str) -> No
             f'Odds: {escape(str(odds_source))}</div>',
             unsafe_allow_html=True,
         )
+        top_pick = (analysis.get("predictions") or [None])[0]
+        if top_pick and bankroll_mgr and on_bet_click:
+            stake_info = bankroll_mgr.calculate_stake(float(top_pick.get("probability", 0.55)), 1.80, None)
+            if st.button("Registrar aposta", key=f"premium_bet_{card_key}", use_container_width=True, type="secondary"):
+                created, message = on_bet_click(match, top_pick, stake_info, 1.80, "https://betboom.com/sport/esports")
+                if created:
+                    st.success(message)
+                else:
+                    st.info(message)
 
 
-def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None:
+def _render_premium_match_board(
+    matches: list[dict],
+    analysis_map: dict,
+    bankroll_mgr: BankrollManager | None = None,
+    on_bet_click=None,
+) -> None:
     priority = {
         "msi": 0,
         "lpl": 1,
@@ -539,7 +599,7 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
         st.markdown('<div class="premium-section-title">Partidas Ao Vivo</div>', unsafe_allow_html=True)
         for index, match in enumerate(live_matches[:8]):
             key = f"{match.get('team1', '')}|{match.get('team2', '')}"
-            _render_premium_match_card(match, analysis_map.get(key, {}), f"live_{index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+            _render_premium_match_card(match, analysis_map.get(key, {}), f"live_{index}_{hashlib.md5(key.encode()).hexdigest()[:8]}", bankroll_mgr, on_bet_click)
 
     if upcoming_matches:
         st.markdown('<div class="premium-section-title">Próximos Jogos</div>', unsafe_allow_html=True)
@@ -558,7 +618,7 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
                 match = visible_upcoming[item_index]
                 key = f"{match.get('team1', '')}|{match.get('team2', '')}"
                 with col:
-                    _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
+                    _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}", bankroll_mgr, on_bet_click)
 
 
 def _priority_sort_key(match: dict) -> tuple:
@@ -674,10 +734,11 @@ banca_ini = float(st.session_state.banca_ini)
 banca_meta = float(st.session_state.banca_meta)
 banca_atual = float(st.session_state.banca_atual_sync)
 history = _load_history()
+banca_disponivel = _available_bankroll(banca_atual, history)
 
 _apply_premium_frontend_css()
-render_header(banca_atual, banca_ini, banca_meta, display_name)
-render_sidebar_navigation(st.session_state.aba, banca_atual, display_name)
+render_header(banca_disponivel, banca_ini, banca_meta, display_name)
+render_sidebar_navigation(st.session_state.aba, banca_disponivel, display_name)
 render_guest_banner()
 
 if st.session_state.aba == "wiki":
@@ -797,9 +858,9 @@ if st.session_state.aba == "banca":
 
 fetcher = DataFetcher()
 analyzer = MatchAnalyzer()
-bankroll_mgr = BankrollManager(banca_atual, banca_meta, "Kelly (Recomendado)")
+bankroll_mgr = BankrollManager(banca_disponivel, banca_meta, "Kelly (Recomendado)")
 
-if banca_atual <= 0:
+if banca_disponivel <= 0:
     st.info("Banca zerada ou não sincronizada. Vá em Gestão de Banca e informe seu saldo para liberar stakes.")
 
 if st.session_state.selected_match:
@@ -828,10 +889,11 @@ if st.session_state.selected_match:
         None,
         roster1,
         roster2,
-        banca_atual,
+        banca_disponivel,
         banca_meta,
         twitch_channel,
         live_stats,
+        _register_pending_from_click,
     )
     st.stop()
 
@@ -856,6 +918,14 @@ if oddspapi_odds:
         else:
             enriched_matches.append(match)
     all_matches = enriched_matches
+
+history, banca_atual, settled_bets = _auto_settle_pending_bets(all_matches, banca_atual)
+if settled_bets:
+    st.toast(f"{len(settled_bets)} aposta(s) pendente(s) liquidada(s).")
+    st.rerun()
+
+banca_disponivel = _available_bankroll(banca_atual, history)
+bankroll_mgr = BankrollManager(banca_disponivel, banca_meta, "Kelly (Recomendado)")
 
 source_counts = Counter(match.get("source", "Agenda") for match in all_matches)
 source_summary = " + ".join(f"{source} ({count})" for source, count in source_counts.most_common())
@@ -914,7 +984,7 @@ for match in all_matches:
     code = match.get("league_code", "_unknown")
     league_counts[code] = league_counts.get(code, 0) + 1
 
-_render_sidebar_league_hamburger(LEAGUE_FILTERS, league_counts, st.session_state.league_filter, banca_atual)
+_render_sidebar_league_hamburger(LEAGUE_FILTERS, league_counts, st.session_state.league_filter, banca_disponivel)
 
 if st.session_state.aba == "analise_apostas":
     st.markdown('<div class="premium-title">ANÁLISE DE APOSTAS</div>', unsafe_allow_html=True)
@@ -975,8 +1045,8 @@ with top_b:
     )
 with top_c:
     st.markdown(
-        f'<div class="app-card"><div class="app-card-title">R$ {banca_atual:.2f}</div>'
-        '<div class="app-card-subtitle">Banca sincronizada</div></div>',
+        f'<div class="app-card"><div class="app-card-title">R$ {banca_disponivel:.2f}</div>'
+        f'<div class="app-card-subtitle">Banca disponível · Exposição R$ {pending_exposure(history):.2f}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -1056,8 +1126,8 @@ with main_col:
         selected = st.session_state.selected_match
         selected_id = hashlib.md5((selected["team1"] + selected["team2"]).encode()).hexdigest()[:8]
 
-    _render_premium_match_board(filtered_matches, analysis_map)
+    _render_premium_match_board(filtered_matches, analysis_map, bankroll_mgr, _register_pending_from_click)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with coupon_col:
-    render_coupon_panel(st.session_state.selected_match, banca_atual)
+    render_coupon_panel(st.session_state.selected_match, banca_disponivel)

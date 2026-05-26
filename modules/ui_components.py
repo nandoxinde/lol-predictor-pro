@@ -6,6 +6,7 @@ Lista estilo BetBoom com logos reais + fallback inicial colorido.
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import hashlib
 from datetime import datetime, timezone, timedelta
 from html import escape
 
@@ -520,7 +521,7 @@ def render_match_list(matches: list, analysis_map: dict,
 # ─── Sala de Operação ─────────────────────────────────────────────────
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                            roster_t1, roster_t2, bankroll, target,
-                           twitch_channel="", live_stats=None):
+                           twitch_channel="", live_stats=None, on_bet_click=None):
     from modules.data_fetcher import generate_decision_card
     t1  = match["team1"]; t2 = match["team2"]
     lg  = match.get("league_display", match.get("league",""))
@@ -561,7 +562,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     with col_v:
         _render_video_player(twitch_channel or lc, t1, t2, lg, match=match)
     with col_m:
-        _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2)
+        _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match, on_bet_click)
 
     st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
     _render_lolesports_live_stats(match, live_stats or {})
@@ -888,7 +889,7 @@ def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, 
         st.session_state.twitch_custom = ch
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
-def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
+def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match=None, on_bet_click=None):
     top   = dc.get("top_pick")
     safe  = dc.get("safe_picks", [])
     risky = dc.get("risky_picks", [])
@@ -929,20 +930,26 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2):
             st.warning("⚠️ Stake >10% da banca.")
 
         # Link BetBoom editável
-        bb_key = f"bb_{t1[:3]}{t2[:3]}"
+        match = match or {"team1": t1, "team2": t2}
+        match_token = hashlib.md5(f'{t1}|{t2}|{match.get("datetime", "")}'.encode()).hexdigest()[:8]
+        bb_key = f"bb_{match_token}"
         bb_link = st.text_input(
             "🔗 Link da partida na BetBoom:",
             value="https://betboom.com/sport/esports",
             key=bb_key,
             placeholder="Cole o link direto aqui...")
         bet_url = bb_link.strip() if bb_link.strip().startswith("http") else "https://betboom.com"
-        st.markdown(
-            f'<a href="{bet_url}" target="_blank" style="text-decoration:none;">'
-            f'<div style="background:linear-gradient(135deg,#1A5C32,#0D3520);'
-            f'border:1px solid #22C55E44;border-radius:7px;'
-            f'padding:10px;text-align:center;margin-bottom:10px;">'
-            f'<span style="font-size:14px;font-weight:800;color:#22C55E;">'
-            f'🎲 APOSTAR NA BETBOOM</span></div></a>', unsafe_allow_html=True)
+        if st.button("🎲 Registrar e abrir BetBoom", key=f"betboom_register_{match_token}", use_container_width=True, type="primary"):
+            if on_bet_click:
+                created, message = on_bet_click(match, top, si, 1.80, bet_url)
+                if created:
+                    st.success(message)
+                else:
+                    st.info(message)
+            st.session_state[f"betboom_ready_{match_token}"] = bet_url
+
+        if st.session_state.get(f"betboom_ready_{match_token}"):
+            st.link_button("Abrir BetBoom em nova aba", st.session_state[f"betboom_ready_{match_token}"], use_container_width=True)
 
     # Apostas Seguras / Risco
     if safe or risky:
@@ -1172,12 +1179,14 @@ def render_bankroll_tab(history, save_fn, calc_fn):
 
     if history:
         df = pd.DataFrame(history)
-        for c in ["date","match","market","odds","stake","result","profit"]:
+        for c in ["date","match","market","odds","stake","status","result","profit"]:
             if c not in df.columns: df[c] = ""
+        df["status"] = df["status"].replace("", pd.NA).fillna(df["result"])
         st.dataframe(
-            df[["date","match","market","odds","stake","result","profit"]].rename(columns={
+            df[["date","match","market","odds","stake","status","result","profit"]].rename(columns={
                 "date":"Data","match":"Partida","market":"Mercado",
-                "odds":"Odd","stake":"Valor","result":"Resultado","profit":"Lucro"}),
+                "odds":"Odd","stake":"Valor","status":"Status",
+                "result":"Resultado","profit":"Lucro"}),
             use_container_width=True,
             height=min(380, 40+35*len(df)))
         if st.button("🗑️ Limpar Histórico", key="btn_del"):
