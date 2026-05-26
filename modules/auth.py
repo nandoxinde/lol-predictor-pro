@@ -76,35 +76,138 @@ def _render_login():
 
     st.markdown("""
     <style>
-    html,body,.stApp{background:#0B0D11!important;}
-    .main .block-container{padding-top:60px!important;}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
+    html,body,.stApp,[data-testid="stAppViewContainer"]{
+        background:#06030D!important;
+        color:#EDE9FE!important;
+        font-family:'Inter',sans-serif!important;
+        overflow-x:hidden!important;}
+    [data-testid="stAppViewContainer"]::before{
+        content:"";
+        position:fixed;
+        inset:-3%;
+        z-index:0;
+        pointer-events:none;
+        background:
+            radial-gradient(circle at 50% 38%,rgba(168,85,247,.32),transparent 24%),
+            linear-gradient(90deg,rgba(5,3,13,.98) 0%,rgba(24,8,42,.58) 42%,rgba(5,3,13,.96) 100%),
+            linear-gradient(180deg,rgba(5,3,13,.18) 0%,rgba(5,3,13,.86) 78%,#05030D 100%),
+            url("https://w.wallhaven.cc/full/n6/wallhaven-n69ev7.jpg");
+        background-size:cover;
+        background-position:center 35%;
+        filter:saturate(1.25) contrast(1.08);
+        animation:baronBreath 12s ease-in-out infinite alternate;}
+    [data-testid="stAppViewContainer"]::after{
+        content:"";
+        position:fixed;
+        inset:0;
+        z-index:0;
+        pointer-events:none;
+        background:
+            radial-gradient(circle at 50% 30%,rgba(216,180,254,.16),transparent 16%),
+            radial-gradient(circle at 34% 58%,rgba(124,58,237,.14),transparent 24%),
+            linear-gradient(180deg,transparent 0%,rgba(8,4,18,.72) 100%);
+        animation:voidMist 9s ease-in-out infinite alternate;}
+    .main .block-container{
+        position:relative!important;
+        z-index:1!important;
+        padding-top:28px!important;
+        max-width:980px!important;}
     section[data-testid="stSidebar"],footer,#MainMenu{display:none!important;}
-    .stButton>button{font-family:'Inter',sans-serif!important;font-weight:700!important;
-        border-radius:6px!important;border:none!important;}
-    .stButton>button[kind="primary"]{background:#1565C0!important;color:#fff!important;}
-    .stTextInput input{background:#0F1520!important;border:1px solid #1E2D45!important;
-        color:#C8D4E8!important;border-radius:6px!important;padding:10px 14px!important;
+    .baron-hero{
+        text-align:center;
+        padding:18px 0 24px;
+        position:relative;}
+    .baron-mark{
+        width:116px;height:116px;margin:0 auto 10px;
+        border-radius:50%;
+        background:
+            radial-gradient(circle at 50% 35%,rgba(250,245,255,.94) 0%,rgba(168,85,247,.58) 18%,rgba(59,7,100,.22) 44%,transparent 70%);
+        border:1px solid rgba(216,180,254,.42);
+        box-shadow:0 0 34px rgba(168,85,247,.62),inset 0 0 22px rgba(250,245,255,.18);
+        display:flex;align-items:center;justify-content:center;
+        animation:baronPulse 2.8s ease-in-out infinite;}
+    .baron-mark span{
+        font-size:54px;
+        filter:drop-shadow(0 0 16px rgba(216,180,254,.85));
+        transform:translateY(-1px);}
+    .baron-title{
+        font-size:32px;
+        line-height:1;
+        font-weight:900;
+        color:#F5F3FF;
+        letter-spacing:-.8px;
+        text-shadow:0 0 22px rgba(168,85,247,.62),0 2px 0 #05030D;}
+    .baron-title b{color:#A855F7;}
+    .baron-badge{
+        background:linear-gradient(135deg,#7C3AED,#2563EB);
+        color:#fff;
+        font-size:10px;
+        font-weight:900;
+        padding:2px 6px;
+        border-radius:5px;
+        margin-left:6px;
+        vertical-align:middle;}
+    .baron-subtitle{
+        color:#A78BFA;
+        font-size:11px;
+        font-weight:800;
+        letter-spacing:1.8px;
+        margin-top:10px;
+        text-transform:uppercase;}
+    .baron-login-panel{
+        background:linear-gradient(180deg,rgba(15,10,25,.84),rgba(8,6,16,.92));
+        border:1px solid rgba(168,85,247,.45);
+        box-shadow:0 22px 70px rgba(0,0,0,.62),0 0 42px rgba(124,58,237,.20),inset 0 0 0 1px rgba(245,243,255,.05);
+        border-radius:18px;
+        padding:28px 24px;
+        backdrop-filter:blur(8px);}
+    .stButton>button{
+        font-family:'Inter',sans-serif!important;
+        font-weight:900!important;
+        border-radius:10px!important;
+        border:1px solid rgba(216,180,254,.36)!important;
+        min-height:46px!important;
+        transition:all .18s ease!important;}
+    .stButton>button[kind="primary"]{
+        background:linear-gradient(135deg,#7C3AED,#EC4899)!important;
+        color:#fff!important;
+        box-shadow:0 0 28px rgba(168,85,247,.40)!important;}
+    .stButton>button[kind="primary"]:hover{
+        transform:translateY(-1px)!important;
+        box-shadow:0 0 42px rgba(236,72,153,.48)!important;}
+    .stTextInput input{
+        background:rgba(10,12,24,.86)!important;
+        border:1px solid rgba(168,85,247,.34)!important;
+        color:#F5F3FF!important;
+        border-radius:10px!important;
+        padding:11px 14px!important;
         font-size:15px!important;}
+    .stTextInput input:focus{
+        border-color:#C084FC!important;
+        box-shadow:0 0 0 1px rgba(192,132,252,.35),0 0 20px rgba(124,58,237,.24)!important;}
+    @keyframes baronBreath{
+        0%{transform:scale(1.00) translate3d(0,0,0);background-position:center 35%;}
+        100%{transform:scale(1.045) translate3d(-10px,-8px,0);background-position:center 31%;}}
+    @keyframes voidMist{
+        0%{opacity:.56;transform:translateX(-16px);}
+        100%{opacity:.86;transform:translateX(18px);}}
+    @keyframes baronPulse{
+        0%,100%{transform:scale(1);box-shadow:0 0 34px rgba(168,85,247,.62),inset 0 0 22px rgba(250,245,255,.18);}
+        50%{transform:scale(1.045);box-shadow:0 0 58px rgba(216,180,254,.78),inset 0 0 30px rgba(250,245,255,.28);}}
     </style>""", unsafe_allow_html=True)
 
     _, col, _ = st.columns([1, 1.4, 1])
     with col:
         st.markdown("""
-        <div style="text-align:center;padding:0 0 28px;">
-          <div style="font-size:48px;margin-bottom:8px;">⚔️</div>
-          <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:-0.5px;">
-            Lol<span style="color:#1565C0;"> Pro</span>
-            <span style="background:#1565C0;color:#fff;font-size:10px;font-weight:700;
-              padding:2px 6px;border-radius:4px;margin-left:6px;vertical-align:middle;">v2.0</span>
-          </div>
-          <div style="font-size:12px;color:#3A4D65;margin-top:6px;letter-spacing:.5px;">
-            PLATAFORMA DE ANÁLISE PREDITIVA · ACESSO RESTRITO
-          </div>
+        <div class="baron-hero">
+          <div class="baron-mark"><span>♛</span></div>
+          <div class="baron-title">Lol<b> Pro</b><span class="baron-badge">v2.0</span></div>
+          <div class="baron-subtitle">Baron Pit Intelligence · Acesso Restrito</div>
         </div>""", unsafe_allow_html=True)
 
         st.markdown(
-            '<div style="background:#0F1520;border:1px solid #1E2D45;border-radius:10px;'
-            'padding:28px 24px;">', unsafe_allow_html=True)
+            '<div class="baron-login-panel">', unsafe_allow_html=True)
 
         with st.form("login_form"):
             username = st.text_input("👤 Usuário",
