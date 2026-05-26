@@ -9,13 +9,19 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
 
 from modules.config import get_secret
 
-ODDSPAPI_KEY = get_secret("ODDSPAPI_KEY")
+ODDSPAPI_KEY = (
+    get_secret("ODDSPAPI_KEY")
+    or get_secret("ODDSPAPI_API_KEY")
+    or get_secret("ODDS_PAPI_KEY")
+    or get_secret("ODDSPAPI_TOKEN")
+)
 ODDSPAPI_BASE = "https://api.oddspapi.io/v4"
 LOL_SPORT_ID = 18
 
@@ -81,26 +87,27 @@ class OddsPapiClient:
     def fetch_lol_odds_for_matches(self, matches: list[dict], bookmaker: str = "pinnacle") -> dict[str, dict]:
         """Return odds keyed by normalized team pair.
 
-        The OddsPapi response can vary by market/bookmaker, so parsing is
-        intentionally defensive. It only returns odds when both team names can
-        be found around the same fixture payload.
+        The most reliable flow is:
+        1. Ask OddsPapi for LoL fixtures with odds in the next ~48h.
+        2. Match those fixtures against PandaScore teams.
+        3. Pull detailed odds for the matched fixture.
         """
         if not self.configured or not matches:
             return {}
 
-        tournament_ids = self._find_relevant_tournament_ids(matches)
-        if not tournament_ids:
-            return {}
-
-        odds_payloads = self._fetch_odds_by_tournaments(tournament_ids, bookmaker)
-        if not odds_payloads:
+        fixtures = self._fetch_lol_fixtures(bookmaker)
+        if not fixtures:
             return {}
 
         result: dict[str, dict] = {}
         for match in matches:
             team1 = match.get("team1", "")
             team2 = match.get("team2", "")
-            odds = self._find_match_odds(odds_payloads, team1, team2)
+            fixture = self._find_fixture(fixtures, team1, team2)
+            if not fixture:
+                continue
+            odds_payload = self._fetch_fixture_odds(str(fixture.get("fixtureId")), bookmaker)
+            odds = self._extract_match_winner_odds(odds_payload)
             if odds:
                 result[_pair_key(team1, team2)] = {
                     "team1": odds[0],
@@ -109,6 +116,105 @@ class OddsPapiClient:
                     "bookmaker": bookmaker,
                 }
         return result
+
+    def _fetch_lol_fixtures(self, bookmaker: str) -> list[dict]:
+        now = datetime.now(timezone.utc)
+        payload = self._get_json(
+            "/fixtures",
+            {
+                "sportId": LOL_SPORT_ID,
+                "from": (now - timedelta(hours=3)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "to": (now + timedelta(hours=44)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "hasOdds": "true",
+                "bookmakers": bookmaker,
+                "language": "en",
+                "apiKey": self.api_key,
+            },
+            timeout=12,
+        )
+        return payload if isinstance(payload, list) else []
+
+    def _find_fixture(self, fixtures: list[dict], team1: str, team2: str) -> dict | None:
+        desired_key = _pair_key(team1, team2)
+        n1 = _norm(team1)
+        n2 = _norm(team2)
+        for fixture in fixtures:
+            participant1 = fixture.get("participant1Name") or fixture.get("participant1ShortName") or ""
+            participant2 = fixture.get("participant2Name") or fixture.get("participant2ShortName") or ""
+            if _pair_key(participant1, participant2) == desired_key:
+                return fixture
+
+            fixture_text = _norm(_flatten_text(fixture))
+            if n1 and n2 and n1 in fixture_text and n2 in fixture_text:
+                return fixture
+        return None
+
+    def _fetch_fixture_odds(self, fixture_id: str, bookmaker: str) -> Any:
+        if not fixture_id:
+            return None
+        return self._get_json(
+            "/odds",
+            {
+                "fixtureId": fixture_id,
+                "bookmakers": bookmaker,
+                "oddsFormat": "decimal",
+                "language": "en",
+                "verbosity": 3,
+                "apiKey": self.api_key,
+            },
+            timeout=12,
+        )
+
+    def _extract_match_winner_odds(self, payload: Any) -> tuple[float, float] | None:
+        if not isinstance(payload, dict):
+            return None
+
+        p1 = _norm(payload.get("participant1Name") or payload.get("participant1ShortName") or "")
+        p2 = _norm(payload.get("participant2Name") or payload.get("participant2ShortName") or "")
+        bookmaker_odds = payload.get("bookmakerOdds") or {}
+
+        for bookmaker_payload in bookmaker_odds.values():
+            markets = bookmaker_payload.get("markets") or {}
+            for market in markets.values():
+                market_text = _norm(_flatten_text({
+                    "bookmakerMarketId": market.get("bookmakerMarketId", ""),
+                    "marketName": market.get("marketName", ""),
+                }))
+                outcomes = market.get("outcomes") or {}
+                prices: list[tuple[str, float, str]] = []
+
+                for outcome in outcomes.values():
+                    for player in (outcome.get("players") or {}).values():
+                        if player.get("active") is False:
+                            continue
+                        price = _as_float(player.get("price"))
+                        if price is None:
+                            continue
+                        label = _norm(player.get("bookmakerOutcomeId") or outcome.get("name") or "")
+                        outcome_text = _norm(_flatten_text({"outcome": outcome, "player": player}))
+                        prices.append((label, price, outcome_text))
+
+                if len(prices) < 2:
+                    continue
+
+                team1_price = None
+                team2_price = None
+                generic_prices: list[float] = []
+                for label, price, outcome_text in prices:
+                    if label in {"home", "1", "team1", "participant1"} or (p1 and p1 in outcome_text):
+                        team1_price = price
+                    elif label in {"away", "2", "team2", "participant2"} or (p2 and p2 in outcome_text):
+                        team2_price = price
+                    elif label != "draw":
+                        generic_prices.append(price)
+
+                if team1_price and team2_price:
+                    return round(team1_price, 2), round(team2_price, 2)
+
+                if ("moneyline" in market_text or "winner" in market_text or "match" in market_text) and len(generic_prices) >= 2:
+                    return round(generic_prices[0], 2), round(generic_prices[1], 2)
+
+        return None
 
     def _find_relevant_tournament_ids(self, matches: list[dict]) -> list[str]:
         tournaments = self._get_json(
@@ -148,9 +254,11 @@ class OddsPapiClient:
             payload = self._get_json(
                 "/odds-by-tournaments",
                 {
-                    "bookmaker": bookmaker,
+                    "bookmakers": bookmaker,
                     "tournamentIds": ",".join(chunk),
                     "oddsFormat": "decimal",
+                    "language": "en",
+                    "verbosity": 3,
                     "apiKey": self.api_key,
                 },
                 timeout=14,
