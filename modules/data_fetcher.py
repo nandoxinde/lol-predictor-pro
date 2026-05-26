@@ -1013,9 +1013,10 @@ class DataFetcher:
 
         parsed: list[dict] = []
         now = datetime.now(timezone.utc)
+        window_start = now - timedelta(hours=5)
+        window_end = now + timedelta(hours=72)
 
         for code, league_id in self.LS_LEAGUES.items():
-            end = now + timedelta(days=50 if code == "msi" else 14)
             try:
                 response = self.live.get(
                     self.LS_SCHEDULE,
@@ -1040,7 +1041,7 @@ class DataFetcher:
                     if not dt:
                         continue
                     dt_utc = dt.astimezone(timezone.utc)
-                    if dt_utc < now - timedelta(hours=5) or dt_utc > end:
+                    if dt_utc < window_start or dt_utc > window_end:
                         continue
 
                     teams = event_teams

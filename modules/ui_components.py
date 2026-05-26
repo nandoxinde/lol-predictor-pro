@@ -14,6 +14,31 @@ TZ_BRT = timezone(timedelta(hours=-3))
 def _now():
     return datetime.now(tz=TZ_BRT)
 
+
+def _match_datetime_brt(match: dict) -> datetime | None:
+    raw = match.get("datetime") or match.get("startTime") or ""
+    if raw:
+        try:
+            value = raw.replace("Z", "+00:00").replace(" ", "T")
+            dt = datetime.fromisoformat(value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(TZ_BRT)
+        except Exception:
+            pass
+
+    raw_brt = match.get("datetime_brt") or ""
+    for fmt in ("%d/%m %H:%M", "%d/%m/%Y %H:%M"):
+        try:
+            dt = datetime.strptime(raw_brt, fmt)
+            now = _now()
+            if fmt == "%d/%m %H:%M":
+                dt = dt.replace(year=now.year)
+            return dt.replace(tzinfo=TZ_BRT)
+        except Exception:
+            continue
+    return None
+
 _TEAM_COLORS = {
     "t1": "#C89B3C", "t1 esports": "#C89B3C",
     "gen.g": "#B8000A", "geng": "#B8000A",
@@ -464,22 +489,21 @@ def filter_matches_by_time(matches: list, time_filter: str) -> list:
         return [m for m in matches if m.get("state") == "inProgress"]
     if time_filter == "all":
         return matches
-    limits = {"1h":60,"3h":180,"6h":360,"12h":720,"1d":1440,"2d":2880,"3d":4320}
+    limits = {"1h":60,"3h":180,"6h":360,"12h":720,"24h":1440,"1d":1440,"2d":2880,"3d":4320}
     max_min = limits.get(time_filter, 9999)
+    now = _now()
     result = []
     for m in matches:
         if m.get("state") == "inProgress":
             result.append(m); continue
-        dt_str = m.get("datetime","")
-        if not dt_str: continue
-        try:
-            s   = dt_str.replace("Z","+00:00").replace(" ","T")
-            dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
-            mins = (dt - _now()).total_seconds() / 60
-            if 0 <= mins <= max_min:
+        dt = _match_datetime_brt(m)
+        if not dt:
+            if time_filter == "all":
                 result.append(m)
-        except Exception:
-            pass
+            continue
+        mins = (dt - now).total_seconds() / 60
+        if -15 <= mins <= max_min:
+            result.append(m)
     return result
 
 # ─── Lista de partidas estilo BetBoom ─────────────────────────────────
