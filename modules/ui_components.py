@@ -128,16 +128,70 @@ html,body,.stApp,[data-testid="stAppViewContainer"]{
 footer,#MainMenu,[data-testid="stDecoration"],.stDeployButton{display:none!important;}
 section[data-testid="stSidebar"]{
     display:block!important;
-    background:linear-gradient(180deg,#0F1520 0%,#090C14 100%)!important;
-    border-right:1px solid #1A2235!important;}
+    width:260px!important;
+    min-width:260px!important;
+    max-width:260px!important;
+    transform:none!important;
+    visibility:visible!important;
+    background:#07111D!important;
+    border-right:1px solid #24344A!important;}
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"]{
-    padding:18px 12px!important;}
+    width:260px!important;
+    padding:18px 16px!important;
+    overflow-x:hidden!important;}
+[data-testid="collapsedControl"],[data-testid="stSidebarCollapseButton"]{
+    display:none!important;}
 section[data-testid="stSidebar"] .stButton>button{
     width:100%!important;
     justify-content:flex-start!important;
-    min-height:42px!important;
-    border-radius:12px!important;
-    padding-left:14px!important;}
+    min-height:50px!important;
+    border-radius:15px!important;
+    padding-left:15px!important;
+    margin:3px 0!important;
+    font-size:14px!important;
+    font-weight:800!important;
+    letter-spacing:.1px!important;}
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]{
+    background:linear-gradient(90deg,rgba(249,115,22,.22),rgba(249,115,22,.10))!important;
+    color:#FF7A1A!important;
+    border:1px solid #B45309!important;
+    box-shadow:inset 0 0 0 1px rgba(255,122,26,.10)!important;}
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]{
+    background:#0D1624!important;
+    color:#9DB1C9!important;
+    border:1px solid #1A2A40!important;}
+section[data-testid="stSidebar"] .stButton>button[kind="secondary"]:hover{
+    background:#121D2E!important;
+    color:#F2C7A8!important;
+    border-color:#8A3E12!important;}
+.sidebar-brand{
+    display:flex;
+    gap:12px;
+    align-items:center;
+    padding:4px 0 18px;
+    border-bottom:1px solid #24344A;
+    margin-bottom:14px;}
+.sidebar-logo{
+    width:46px;height:46px;border-radius:14px;
+    background:linear-gradient(135deg,#FF8A2A,#F97316);
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:20px;font-weight:900;}
+.sidebar-name{font-size:17px;font-weight:900;color:#fff;line-height:1.04;}
+.sidebar-sub{font-size:12px;font-weight:900;color:#FF7A1A;letter-spacing:1px;}
+.sidebar-hint{
+    margin-top:18px;
+    padding:14px 16px;
+    border-radius:15px;
+    background:linear-gradient(90deg,rgba(249,115,22,.14),rgba(15,23,42,.88));
+    border:1px solid rgba(249,115,22,.48);}
+.sidebar-hint-title{color:#FF7A1A;font-size:15px;font-weight:900;margin-bottom:4px;}
+.sidebar-hint-text{color:#C5D1E3;font-size:13px;line-height:1.35;}
+.sidebar-spacer{height:8px;}
+.sidebar-league-title{
+    color:#FF7A1A;
+    font-size:15px;
+    font-weight:900;
+    margin:4px 0 8px;}
 .stButton>button{
     font-family:'Inter',sans-serif!important;
     font-weight:700!important;font-size:13px!important;
@@ -218,22 +272,18 @@ def apply_custom_css():
 def render_sidebar_navigation(current: str, bankroll: float = 0.0, username: str = "Fernando"):
     with st.sidebar:
         st.markdown(
-            f'<div style="padding:8px 6px 14px;">'
-            f'<div style="font-size:24px;font-weight:900;color:#fff;">Lol'
-            f'<span style="color:#1565C0;"> Pro</span></div>'
-            f'<div style="font-size:11px;color:#5A7090;margin-top:4px;">'
-            f'Operação Esports · {username}</div>'
-            f'<div style="margin-top:12px;background:#090C14;border:1px solid #1A2235;'
-            f'border-radius:14px;padding:12px;">'
-            f'<div style="font-size:10px;color:#5A7090;font-weight:800;">BANCA ATUAL</div>'
-            f'<div style="font-size:22px;color:#1A9FFF;font-weight:900;">R$ {bankroll:.2f}</div>'
-            f'</div></div>',
+            f'<div class="sidebar-brand">'
+            f'<div class="sidebar-logo">LP</div>'
+            f'<div><div class="sidebar-name">LoL Predictor</div>'
+            f'<div class="sidebar-sub">PRO</div></div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
         items = [
             ("operacao", "🎮 Jogos de Hoje"),
-            ("stats_t1_dk", "📊 Estatísticas da T1/DK"),
+            ("stats_t1_dk", "📊 Estatísticas"),
+            ("analise_apostas", "🎯 Análise de Apostas"),
             ("banca", "⚙️ Painel de Controle"),
         ]
         for key, label in items:
@@ -243,15 +293,7 @@ def render_sidebar_navigation(current: str, bankroll: float = 0.0, username: str
                 st.session_state.selected_match = None
                 st.rerun()
 
-        st.markdown(
-            '<div style="margin-top:18px;padding:12px;border-radius:14px;'
-            'background:#0B0D11;border:1px solid #1A2235;">'
-            '<div style="font-size:11px;color:#5A7090;line-height:1.6;">'
-            '<b style="color:#C8D4E8;">Fluxo</b><br>'
-            '1. Veja os jogos<br>2. Abra a sala de operação<br>3. Registre no painel'
-            '</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
 
 # ─── Header ───────────────────────────────────────────────────────────
 def render_header(banca_atual, banca_ini, meta, username="Fernando"):

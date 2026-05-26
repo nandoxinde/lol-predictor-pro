@@ -384,14 +384,15 @@ def _render_premium_match_board(matches: list[dict], analysis_map: dict) -> None
                     _render_premium_match_card(match, analysis_map.get(key, {}), f"next_{item_index}_{hashlib.md5(key.encode()).hexdigest()[:8]}")
 
 
-def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dict[str, int], current: str) -> None:
+def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dict[str, int], current: str, bankroll: float = 0.0) -> None:
     """Menu lateral compacto para não poluir a área de jogos."""
     total = sum(counts.values())
     visible_leagues = [(code, label, counts.get(code, 0)) for code, label in leagues if counts.get(code, 0) > 0]
 
     with st.sidebar:
-        st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
-        with st.expander("☰ Escolher liga", expanded=False):
+        st.markdown('<div class="sidebar-spacer"></div>', unsafe_allow_html=True)
+        with st.expander("☰ Linhas / Ligas", expanded=False):
+            st.markdown('<div class="sidebar-league-title">Escolher linha</div>', unsafe_allow_html=True)
             if st.button(
                 f"Todos os jogos ({total})",
                 key="hamburger_league_all",
@@ -411,6 +412,15 @@ def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dic
                 ):
                     st.session_state.league_filter = code
                     st.rerun()
+
+        st.markdown(
+            f'<div class="sidebar-hint">'
+            f'<div class="sidebar-hint-title">Insights estatísticos</div>'
+            f'<div class="sidebar-hint-text">Não garante lucro ou resultados.<br>'
+            f'Banca atual: <b style="color:#fff;">R$ {bankroll:.2f}</b></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
 
 profile = st.session_state.get("profile") or _load_profile()
@@ -604,7 +614,51 @@ for match in all_matches:
     code = match.get("league_code", "_unknown")
     league_counts[code] = league_counts.get(code, 0) + 1
 
-_render_sidebar_league_hamburger(LEAGUE_FILTERS, league_counts, st.session_state.league_filter)
+_render_sidebar_league_hamburger(LEAGUE_FILTERS, league_counts, st.session_state.league_filter, banca_atual)
+
+if st.session_state.aba == "analise_apostas":
+    st.markdown('<div class="premium-title">ANÁLISE DE APOSTAS</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="app-card">'
+        '<div class="app-card-title">Mercados sugeridos</div>'
+        '<div class="app-card-subtitle">Análises geradas com os mesmos jogos reais carregados da PandaScore.</div>',
+        unsafe_allow_html=True,
+    )
+
+    visible_matches = filter_matches_by_time(all_matches, st.session_state.time_filter)
+    if st.session_state.league_filter != "all":
+        visible_matches = [m for m in visible_matches if m.get("league_code") == st.session_state.league_filter]
+
+    if not visible_matches:
+        st.info("Nenhum jogo disponível para análise neste filtro.")
+    else:
+        for index, match in enumerate(visible_matches[:8]):
+            key = f"{match.get('team1', '')}|{match.get('team2', '')}"
+            analysis = analysis_map.get(key, {})
+            predictions = analysis.get("predictions", [])
+            top_pick = predictions[0] if predictions else None
+            with st.container(border=True):
+                c_match, c_pick, c_action = st.columns([2.2, 2.6, 1])
+                with c_match:
+                    st.markdown(
+                        f'**{match.get("team1", "Time 1")} vs {match.get("team2", "Time 2")}**  \n'
+                        f'{match.get("league_display", match.get("league", "LoL"))} · {match.get("datetime_brt", "")}'
+                    )
+                with c_pick:
+                    if top_pick:
+                        st.markdown(
+                            f'**{top_pick.get("market", "Mercado")}**  \n'
+                            f'{top_pick.get("suggestion", "")} · confiança **{top_pick.get("confidence", 0):.0f}%**'
+                        )
+                    else:
+                        st.caption("Sem pick acima do corte de confiança para este jogo.")
+                with c_action:
+                    if st.button("Abrir", key=f"analysis_open_{index}_{hashlib.md5(key.encode()).hexdigest()[:8]}", use_container_width=True, type="primary"):
+                        st.session_state.selected_match = match
+                        st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
 
 top_a, top_b, top_c = st.columns(3)
 with top_a:

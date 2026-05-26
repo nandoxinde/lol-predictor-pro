@@ -95,6 +95,7 @@ def _render_login():
             url("https://wiki.leagueoflegends.com/en-us/Special:Redirect/file/Baron_Nashor_Splash_concept_01.jpg");
         background-size:cover;
         background-position:center 34%;
+        background-repeat:no-repeat;
         filter:saturate(1.18) contrast(1.12) brightness(.86);
         animation:baronBreath 14s ease-in-out infinite alternate;}
     [data-testid="stAppViewContainer"]::after{
@@ -157,7 +158,7 @@ def _render_login():
         letter-spacing:1.8px;
         margin-top:8px;
         text-transform:uppercase;}
-    .baron-login-panel{
+    [data-testid="stForm"]{
         position:relative;
         max-width:360px;
         margin:0 auto;
@@ -166,9 +167,10 @@ def _render_login():
         border:1px solid rgba(200,155,60,.72);
         box-shadow:0 22px 70px rgba(0,0,0,.68),0 0 42px rgba(124,58,237,.22),inset 0 0 0 1px rgba(247,231,178,.08);
         border-radius:10px;
-        padding:22px 24px 18px;
-        backdrop-filter:blur(8px);}
-    .baron-login-panel::before{
+        padding:20px 22px 16px!important;
+        backdrop-filter:blur(8px);
+        clip-path:polygon(7% 0,93% 0,100% 12%,100% 88%,93% 100%,7% 100%,0 88%,0 12%);}
+    [data-testid="stForm"]::before{
         content:"";
         position:absolute;
         inset:-10px;
@@ -176,7 +178,7 @@ def _render_login():
         border:1px solid rgba(200,155,60,.40);
         clip-path:polygon(8% 0,92% 0,100% 12%,100% 88%,92% 100%,8% 100%,0 88%,0 12%);
         box-shadow:0 0 30px rgba(200,155,60,.18);}
-    .baron-login-panel::after{
+    [data-testid="stForm"]::after{
         content:"";
         position:absolute;
         left:-90px;
@@ -222,7 +224,7 @@ def _render_login():
         50%{transform:scale(1.045);box-shadow:0 0 58px rgba(216,180,254,.78),inset 0 0 30px rgba(250,245,255,.28);}}
     </style>""", unsafe_allow_html=True)
 
-    _, col, _ = st.columns([1, 1.05, 1])
+    _, col, _ = st.columns([1, .92, 1])
     with col:
         st.markdown("""
         <div class="baron-hero">
@@ -230,9 +232,6 @@ def _render_login():
           <div class="baron-title">Lol Predictor<b> Pro</b><span class="baron-badge">v2.0</span></div>
           <div class="baron-subtitle">Log in to your account</div>
         </div>""", unsafe_allow_html=True)
-
-        st.markdown(
-            '<div class="baron-login-panel">', unsafe_allow_html=True)
 
         with st.form("login_form"):
             username = st.text_input("👤 Usuário",
@@ -285,8 +284,6 @@ def _render_login():
 
                 else:
                     st.error("❌ Usuário ou senha incorretos.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
         # Dica de usuários disponíveis
         st.markdown(
