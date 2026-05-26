@@ -317,6 +317,8 @@ class DataFetcher:
     LQ_HEADERS = {"User-Agent": "LoLPredictorPro/2.0 (personal project)", "Accept-Encoding": "gzip"}
     LS_LIVE = "https://esports-api.lolesports.com/persisted/gw/getLive"
     LS_SCHEDULE = "https://esports-api.lolesports.com/persisted/gw/getSchedule"
+    LS_WINDOW = "https://feed.lolesports.com/livestats/v1/window"
+    LS_DETAILS = "https://feed.lolesports.com/livestats/v1/details"
     LS_LEAGUES = {
         "msi": "98767991325878492",
         "cblol": "98767991332355509",
@@ -368,6 +370,93 @@ class DataFetcher:
         if matches:
             return matches, "LoLEsports"
         return self._demo_matches(query), "demo"
+
+    def fetch_lolesports_live_stats(self, game_id: str | None) -> dict:
+        if not game_id:
+            return {}
+        try:
+            # The LoLEsports live feed requires startingTime aligned to 10s.
+            # Asking for the last two minutes returns the newest delayed frame.
+            start = datetime.now(timezone.utc) - timedelta(minutes=2)
+            start = start.replace(microsecond=0, second=(start.second // 10) * 10)
+            params = {"startingTime": start.isoformat().replace("+00:00", "Z")}
+            window = requests.get(
+                f"{self.LS_WINDOW}/{game_id}",
+                headers={"User-Agent": "LoLPredictorPro/2.0"},
+                params=params,
+                timeout=10,
+            )
+            details = requests.get(
+                f"{self.LS_DETAILS}/{game_id}",
+                headers={"User-Agent": "LoLPredictorPro/2.0"},
+                params=params,
+                timeout=10,
+            )
+            if window.status_code != 200:
+                return {"status": "unavailable", "message": f"Live stats indisponíveis ({window.status_code})."}
+
+            window_data = window.json()
+            detail_data = details.json() if details.status_code == 200 else {}
+            frames = window_data.get("frames") or []
+            detail_frames = detail_data.get("frames") or []
+            if not frames:
+                return {"status": "waiting", "message": "Aguardando frames oficiais do LoLEsports."}
+
+            frame = frames[-1]
+            detail_frame = detail_frames[-1] if detail_frames else {}
+            participant_details = {
+                item.get("participantId"): item
+                for item in (detail_frame.get("participants") or [])
+                if item.get("participantId") is not None
+            }
+
+            metadata = window_data.get("gameMetadata") or {}
+            participants_meta = (
+                (metadata.get("blueTeamMetadata") or {}).get("participantMetadata") or []
+            ) + (
+                (metadata.get("redTeamMetadata") or {}).get("participantMetadata") or []
+            )
+            meta_by_id = {item.get("participantId"): item for item in participants_meta}
+
+            def build_team(side_key: str) -> dict:
+                side = frame.get(side_key) or {}
+                players = []
+                for player in side.get("participants") or []:
+                    pid = player.get("participantId")
+                    meta = meta_by_id.get(pid, {})
+                    detail = participant_details.get(pid, {})
+                    players.append({
+                        "name": meta.get("summonerName") or f"Player {pid}",
+                        "champion": meta.get("championId") or "",
+                        "role": meta.get("role") or "",
+                        "kills": player.get("kills", 0),
+                        "deaths": player.get("deaths", 0),
+                        "assists": player.get("assists", 0),
+                        "cs": player.get("creepScore", 0),
+                        "gold": player.get("totalGold") or detail.get("totalGoldEarned", 0),
+                        "level": player.get("level", 0),
+                    })
+                return {
+                    "total_gold": side.get("totalGold", 0),
+                    "kills": side.get("totalKills", 0),
+                    "towers": side.get("towers", 0),
+                    "inhibitors": side.get("inhibitors", 0),
+                    "barons": side.get("barons", 0),
+                    "dragons": side.get("dragons", []),
+                    "players": players,
+                }
+
+            return {
+                "status": "ok",
+                "game_id": game_id,
+                "timestamp": frame.get("rfc460Timestamp"),
+                "game_state": frame.get("gameState"),
+                "patch": metadata.get("patchVersion"),
+                "blue": build_team("blueTeam"),
+                "red": build_team("redTeam"),
+            }
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
 
     def _append_unique(self, matches: list, seen: set, match: dict | None, query: str) -> None:
         if not match:
@@ -577,7 +666,12 @@ class DataFetcher:
                 if code == "lpl" and not is_verified_lpl_match(teams[0].get("name", ""), teams[1].get("name", "")):
                     code = "_unknown"
                 info = get_league_info(code)
-                parsed.append(self._mk(
+                active_game = next(
+                    (game for game in event.get("match", {}).get("games", [])
+                     if str(game.get("state", "")).lower() in ("inprogress", "in_progress", "live")),
+                    None,
+                )
+                item = self._mk(
                     teams[0].get("name", "Team A"),
                     teams[1].get("name", "Team B"),
                     code,
@@ -590,7 +684,22 @@ class DataFetcher:
                     teams[1].get("image", ""),
                     event.get("id"),
                     "LoLEsports",
-                ))
+                )
+                item["lolesports_event_id"] = event.get("id")
+                item["lolesports_game_id"] = (active_game or {}).get("id", "")
+                item["live_stats_status"] = "enabled" if item["lolesports_game_id"] else "waiting_game_id"
+                if active_game:
+                    team_by_id = {team.get("id"): fix_name(team.get("name", "")) for team in teams}
+                    for side_team in active_game.get("teams") or []:
+                        if side_team.get("side") == "blue":
+                            item["blue_team"] = team_by_id.get(side_team.get("id"), "Azul")
+                        if side_team.get("side") == "red":
+                            item["red_team"] = team_by_id.get(side_team.get("id"), "Vermelho")
+                streams = event.get("streams") or []
+                if streams:
+                    item["stream_provider"] = streams[0].get("provider", "")
+                    item["stream_parameter"] = streams[0].get("parameter", "")
+                parsed.append(item)
             return parsed
         except Exception:
             return []
@@ -652,7 +761,12 @@ class DataFetcher:
                         # LPL schedules can briefly contain TBD slots. Keep named Chinese teams only.
                         continue
 
-                    parsed.append(self._mk(
+                    active_game = next(
+                        (game for game in event.get("match", {}).get("games", [])
+                         if str(game.get("state", "")).lower() in ("inprogress", "in_progress", "live")),
+                        None,
+                    )
+                    item = self._mk(
                         t1,
                         t2,
                         code,
@@ -665,7 +779,22 @@ class DataFetcher:
                         teams[1].get("image", ""),
                         event.get("id"),
                         "LoLEsports",
-                    ))
+                    )
+                    item["lolesports_event_id"] = event.get("id")
+                    item["lolesports_game_id"] = (active_game or {}).get("id", "") if state == "inProgress" else ""
+                    item["live_stats_status"] = "enabled" if item["lolesports_game_id"] else ""
+                    if active_game:
+                        team_by_id = {team.get("id"): fix_name(team.get("name", "")) for team in teams}
+                        for side_team in active_game.get("teams") or []:
+                            if side_team.get("side") == "blue":
+                                item["blue_team"] = team_by_id.get(side_team.get("id"), "Azul")
+                            if side_team.get("side") == "red":
+                                item["red_team"] = team_by_id.get(side_team.get("id"), "Vermelho")
+                    streams = event.get("streams") or []
+                    if streams:
+                        item["stream_provider"] = streams[0].get("provider", "")
+                        item["stream_parameter"] = streams[0].get("parameter", "")
+                    parsed.append(item)
             except Exception:
                 continue
 

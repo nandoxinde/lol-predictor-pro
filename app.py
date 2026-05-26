@@ -62,7 +62,7 @@ DEFAULT_STATE = {
     "league_filter": "all",
     "twitch_custom": "",
 }
-DATA_VERSION = "live-ewc-no-cache-v11"
+DATA_VERSION = "lolesports-live-stats-v12"
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -701,7 +701,21 @@ if st.session_state.selected_match:
     roster1 = get_roster(match["team1"], match.get("league_code", "_unknown"))
     roster2 = get_roster(match["team2"], match.get("league_code", "_unknown"))
     twitch_channel = st.session_state.twitch_custom or match.get("league_code", "_unknown")
-    render_operation_room(match, analysis, bankroll_mgr, None, roster1, roster2, banca_atual, banca_meta, twitch_channel)
+    live_stats = {}
+    if match.get("state") == "inProgress" and match.get("lolesports_game_id"):
+        live_stats = fetcher.fetch_lolesports_live_stats(match.get("lolesports_game_id"))
+    render_operation_room(
+        match,
+        analysis,
+        bankroll_mgr,
+        None,
+        roster1,
+        roster2,
+        banca_atual,
+        banca_meta,
+        twitch_channel,
+        live_stats,
+    )
     st.stop()
 
 current_query = st.session_state.get("match_query", "")

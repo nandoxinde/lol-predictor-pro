@@ -7,6 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from html import escape
 
 TZ_BRT = timezone(timedelta(hours=-3))
 
@@ -585,7 +586,7 @@ def render_match_list(matches: list, analysis_map: dict,
 # ─── Sala de Operação ─────────────────────────────────────────────────
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                            roster_t1, roster_t2, bankroll, target,
-                           twitch_channel=""):
+                           twitch_channel="", live_stats=None):
     from modules.data_fetcher import generate_decision_card
     t1  = match["team1"]; t2 = match["team2"]
     lg  = match.get("league_display", match.get("league",""))
@@ -629,6 +630,9 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
         _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2)
 
     st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
+    _render_lolesports_live_stats(match, live_stats or {})
+    if live_stats:
+        st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
 
     # Stats + Rosters
     cs, cr = st.columns(2)
@@ -646,6 +650,71 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
         r1, r2 = st.tabs([f"👥 {t1}", f"👥 {t2}"])
         with r1: _render_roster(roster_t1)
         with r2: _render_roster(roster_t2)
+
+
+def _render_lolesports_live_stats(match: dict, live_stats: dict) -> None:
+    if not live_stats:
+        if match.get("state") == "inProgress" and match.get("source") == "LoLEsports":
+            st.caption("Stats ao vivo: LoLEsports ainda não liberou um game_id para este mapa.")
+        return
+
+    status = live_stats.get("status")
+    if status != "ok":
+        st.info(live_stats.get("message", "Stats ao vivo ainda indisponíveis para este mapa."))
+        return
+
+    blue = live_stats.get("blue") or {}
+    red = live_stats.get("red") or {}
+    blue_name = escape(match.get("blue_team") or "Blue side")
+    red_name = escape(match.get("red_team") or "Red side")
+    timestamp = escape(str(live_stats.get("timestamp") or ""))
+    patch = escape(str(live_stats.get("patch") or ""))
+
+    st.markdown(
+        f'<div style="background:#090C14;border:1px solid #1565C055;border-radius:10px;'
+        f'padding:12px 14px;margin-bottom:10px;">'
+        f'<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">'
+        f'<div style="font-size:13px;font-weight:900;color:#C8D4E8;">Dados ao vivo oficiais LoLEsports</div>'
+        f'<div style="font-size:10px;color:#5A7090;">Patch {patch} · {timestamp}</div>'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    blue_col, red_col = st.columns(2)
+
+    def render_side(col, side_name: str, data: dict, color: str) -> None:
+        dragons = data.get("dragons") or []
+        with col:
+            st.markdown(
+                f'<div style="border:1px solid {color}66;border-radius:10px;padding:10px;'
+                f'background:linear-gradient(180deg,{color}22,#0F1520);">'
+                f'<div style="font-size:14px;font-weight:900;color:#F5F7FA;margin-bottom:8px;">{side_name}</div>'
+                f'<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center;">'
+                f'<div><b>{data.get("kills",0)}</b><br><span>Kills</span></div>'
+                f'<div><b>{data.get("total_gold",0)/1000:.1f}k</b><br><span>Gold</span></div>'
+                f'<div><b>{data.get("towers",0)}</b><br><span>Torres</span></div>'
+                f'<div><b>{len(dragons)}</b><br><span>Dragões</span></div>'
+                f'<div><b>{data.get("barons",0)}</b><br><span>Barões</span></div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            rows = []
+            for player in data.get("players") or []:
+                rows.append({
+                    "Jogador": player.get("name", ""),
+                    "Champ": player.get("champion", ""),
+                    "Role": player.get("role", ""),
+                    "K/D/A": f'{player.get("kills",0)}/{player.get("deaths",0)}/{player.get("assists",0)}',
+                    "CS": player.get("cs", 0),
+                    "Gold": f'{player.get("gold",0)/1000:.1f}k',
+                    "Lvl": player.get("level", 0),
+                })
+            if rows:
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=210)
+
+    render_side(blue_col, blue_name, blue, "#1565C0")
+    render_side(red_col, red_name, red, "#F59E0B")
 
 # ─── Player Twitch ────────────────────────────────────────────────────
 _TWITCH_CHANNELS = {
