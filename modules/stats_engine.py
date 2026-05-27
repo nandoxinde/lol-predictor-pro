@@ -4,12 +4,22 @@ Motor de estatísticas com scraping real da Liquipedia/Leaguepedia.
 Fallback determinístico se a API estiver offline.
 """
 
+import re
+
 import numpy as np
 import requests
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from modules.my_private_api import query_team_stats
+
+LIQUIPEDIA_API_URL = "https://liquipedia.net/leagueoflegends/api.php"
+LIQUIPEDIA_HEADERS = {
+    "User-Agent": "LoLPredictorPro/2.0 (educational; contact@lolpredictor.local)",
+    "Accept-Encoding": "gzip",
+}
+TZ_BRT = ZoneInfo("America/Sao_Paulo")
 
 ROLES = ["Top", "Jungle", "Mid", "ADC", "Support"]
 
@@ -76,6 +86,98 @@ def _estimate_stats(team_name: str, league_code: str = "", last_n: int = 15) -> 
         "games_analyzed": min(int(stats.get("games_analyzed", last_n) or last_n), last_n),
         "source": stats.get("source", "Oracle's Elixir SQLite"),
     }
+
+
+def _liquipedia_league_from_tournament(tournament: str) -> str:
+    path = (tournament or "").lower()
+    if "cblol" in path or "circuito_brasileiro" in path:
+        return "cblol"
+    if "lck_cl" in path or "lck cl" in path:
+        return "lck_cl"
+    if "/lck/" in path or path.startswith("lck/"):
+        return "lck"
+    if "lpl" in path and "lplol" not in path:
+        return "lpl"
+    return "_unknown"
+
+
+def _liquipedia_extract_opponents(chunk: str) -> tuple[str, str] | None:
+    header_m = re.search(
+        r'match-info-header">(.*)<div class="match-info-tournament"',
+        chunk,
+        re.DOTALL,
+    )
+    if not header_m:
+        return None
+    segment = header_m.group(1)
+    blocks = re.split(r'<div class="match-info-header-opponent', segment)
+    teams: list[str] = []
+    for block in blocks[1:3]:
+        anchor = re.search(r'<a href="/leagueoflegends/[^"]+" title="([^"]+)"', block)
+        if anchor:
+            teams.append(anchor.group(1).strip())
+    if len(teams) == 2 and teams[0].lower() != teams[1].lower():
+        return teams[0], teams[1]
+    return None
+
+
+def _liquipedia_skip_tournament(tournament: str, league_code: str) -> bool:
+    upper = (tournament or "").upper()
+    if league_code in {"lck", "lpl", "cblol"}:
+        if any(token in upper for token in (" CL/", "LCK CL", " CHALLENGERS", " ACADEMY", " DESAFIANTE")):
+            return True
+        if league_code == "cblol" and "CBLOL" not in upper and "CIRCUITO_BRASILEIRO" not in upper.replace(" ", "_"):
+            return True
+    return False
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_liquipedia_schedule_raw() -> list[dict]:
+    """Parse Liquipedia:Matches into schedule rows (BRT timestamps)."""
+    try:
+        response = requests.get(
+            LIQUIPEDIA_API_URL,
+            params={"action": "parse", "page": "Liquipedia:Matches", "prop": "text", "format": "json"},
+            headers=LIQUIPEDIA_HEADERS,
+            timeout=20,
+        )
+        if response.status_code != 200:
+            return []
+        html = response.json().get("parse", {}).get("text", {}).get("*", "")
+        if not html:
+            return []
+    except Exception:
+        return []
+
+    rows: list[dict] = []
+    for chunk in html.split('class="match-info"')[1:]:
+        pair = _liquipedia_extract_opponents(chunk)
+        tour_m = re.search(r'match-info-tournament.*?title="([^"]+)"', chunk, re.DOTALL)
+        ts_m = re.search(r'data-timestamp="(\d+)"', chunk)
+        bo_m = re.search(
+            r'match-info-header-scoreholder-lower">\((Bo\d+)\)',
+            chunk,
+            re.IGNORECASE,
+        )
+        if not pair or not ts_m:
+            continue
+
+        tournament = tour_m.group(1) if tour_m else ""
+        league_code = _liquipedia_league_from_tournament(tournament)
+        if league_code == "_unknown" or _liquipedia_skip_tournament(tournament, league_code):
+            continue
+
+        dt_brt = datetime.fromtimestamp(int(ts_m.group(1)), tz=timezone.utc).astimezone(TZ_BRT)
+        rows.append({
+            "team1": pair[0],
+            "team2": pair[1],
+            "datetime": dt_brt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "datetime_brt": dt_brt,
+            "tournament": tournament,
+            "league_code": league_code,
+            "best_of": (bo_m.group(1).replace("Bo", "") if bo_m else "3"),
+        })
+    return rows
 
 
 # ── Scraping Liquipedia ───────────────────────────────────────────────────────

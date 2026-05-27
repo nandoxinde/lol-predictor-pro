@@ -7,27 +7,25 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
-TZ_BRT = timezone(timedelta(hours=-3))
+from modules.data_fetcher import parse_to_brt
+
+TZ_BRT = ZoneInfo("America/Sao_Paulo")
 
 def _now():
     return datetime.now(tz=TZ_BRT)
 
 
 def _match_datetime_brt(match: dict) -> datetime | None:
-    raw = match.get("datetime") or match.get("startTime") or ""
-    if raw:
-        try:
-            value = raw.replace("Z", "+00:00").replace(" ", "T")
-            dt = datetime.fromisoformat(value)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(TZ_BRT)
-        except Exception:
-            pass
-
+    dt_obj = match.get("datetime_obj")
+    if isinstance(dt_obj, datetime):
+        return dt_obj.astimezone(TZ_BRT)
+    parsed = parse_to_brt(match.get("datetime") or match.get("startTime"))
+    if parsed:
+        return parsed
     raw_brt = match.get("datetime_brt") or ""
     for fmt in ("%d/%m %H:%M", "%d/%m/%Y %H:%M"):
         try:
@@ -122,8 +120,9 @@ def _fmt_time(match: dict) -> tuple:
     if not dt_str:
         return match.get("datetime_brt", "--"), "#5A7090", False
     try:
-        s   = dt_str.replace("Z", "+00:00").replace(" ", "T")
-        dt  = datetime.fromisoformat(s).astimezone(TZ_BRT)
+        dt = parse_to_brt(dt_str)
+        if not dt:
+            return match.get("datetime_brt", "--"), "#5A7090", False
         diff = (dt - _now()).total_seconds()
         if diff <= 0:
             return "Agora", "#F59E0B", False

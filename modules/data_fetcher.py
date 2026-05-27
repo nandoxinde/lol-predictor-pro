@@ -1,10 +1,11 @@
 """Data layer for LoL Predictor.
 
 Sources:
-- LoLEsports for official schedule, live status, and team logos.
+- Liquipedia (Liquipedia:Matches) is the schedule source of truth for LCK, LPL and CBLOL.
+- LoLEsports for live status, logos and non-regional leagues (LEC, LCS, MSI, etc.).
 - PandaScore is used only for EWC live games that LoLEsports does not expose.
-- OddsPapi is used by the app only for odds enrichment.
-- Leaguepedia helpers are kept for manual diagnostics, not the main agenda.
+- OddsPapi is used by the app only for odds enrichment (strict team matching).
+- Leaguepedia Cargo fills residual gaps outside the Liquipedia regional window.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import requests
@@ -20,8 +22,10 @@ import requests
 from modules.config import get_secret
 from modules.my_private_api import query_team_stats
 from modules.odds_fetcher import OddsPapiClient
+from modules.stats_engine import fetch_liquipedia_schedule_raw
 
-TZ_BRT = timezone(timedelta(hours=-3))
+TZ_BRT = ZoneInfo("America/Sao_Paulo")
+LIQUIPEDIA_SCHEDULE_LEAGUES = frozenset({"lck", "lpl", "cblol"})
 PANDA_BASE = "https://api.pandascore.co"
 PANDA_TOKEN = get_secret("PANDASCORE_TOKEN")
 LOLESPORTS_DEFAULT_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
@@ -39,12 +43,39 @@ def now_brt() -> datetime:
 
 
 def parse_to_brt(value: str | None) -> datetime | None:
-    if not value:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00").replace(" ", "T")).astimezone(TZ_BRT)
+        if raw.isdigit():
+            ts = int(raw)
+            if ts > 10_000_000_000:
+                ts //= 1000
+            return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(TZ_BRT)
+        normalized = raw.replace("Z", "+00:00").replace(" ", "T")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(TZ_BRT)
     except Exception:
         return None
+
+
+def match_brt_date(match: dict) -> str:
+    dt = match.get("datetime_obj")
+    if isinstance(dt, datetime):
+        return dt.astimezone(TZ_BRT).strftime("%Y-%m-%d")
+    parsed = parse_to_brt(match.get("datetime"))
+    if parsed:
+        return parsed.strftime("%Y-%m-%d")
+    return (match.get("datetime") or "")[:10]
+
+
+def schedule_identity_key(match: dict) -> str:
+    teams_key = "|".join(sorted([_team_key(match.get("team1", "")), _team_key(match.get("team2", ""))]))
+    return f"{teams_key}|{match_brt_date(match)}"
 
 
 def minutes_until(value: str | None) -> float | None:
@@ -69,6 +100,10 @@ NAME_FIX = {
     "kt rolster challengers": "KT Rolster Challengers",
     "gen.g global academy": "Gen.G Global Academy",
     "hanwha life esports": "Hanwha Life Esports",
+    "soopers": "DN SOOPers",
+    "dn soopers": "DN SOOPers",
+    "fearx": "BNK FEARX",
+    "bnk fearx": "BNK FEARX",
 }
 
 
@@ -92,6 +127,8 @@ def _team_key(name: str) -> str:
         "kt challengers": "kt rolster challengers",
         "ns challengers": "nongshim redforce challengers",
         "dns challengers": "dn soopers challengers",
+        "soopers": "dn soopers",
+        "fearx": "bnk fearx",
     }
     return aliases.get(text, text)
 
@@ -375,24 +412,41 @@ class DataFetcher:
         matches: list[dict] = []
         seen: set[str] = set()
         query_norm = query.strip().lower()
+        liquipedia_keys: set[str] = set()
 
-        # Agenda/live/logos come from LoLEsports first; Leaguepedia fills gaps
-        # when official APIs are restricted or incomplete.
+        for match in self._fetch_liquipedia_true_schedule():
+            liquipedia_keys.add(schedule_identity_key(match))
+            self._append_unique(matches, seen, match, query_norm)
+
         for match in self._fetch_lolesports_live():
-            self._append_unique(matches, seen, match, query_norm)
+            self._upsert_schedule_match(matches, seen, match, query_norm)
+
         for match in self._fetch_lolesports_schedule():
+            code = match.get("league_code", "")
+            if code in LIQUIPEDIA_SCHEDULE_LEAGUES and match.get("state") != "inProgress":
+                if schedule_identity_key(match) in liquipedia_keys:
+                    continue
+                continue
             self._append_unique(matches, seen, match, query_norm)
+
         for match in self._fetch_pandascore_running():
             if match.get("league_code") == "ewc":
                 self._append_unique(matches, seen, match, query_norm)
+
         for match in self._fetch_leaguepedia_schedule(query):
+            code = match.get("league_code", "")
+            if code in LIQUIPEDIA_SCHEDULE_LEAGUES and schedule_identity_key(match) in liquipedia_keys:
+                continue
             self._append_unique(matches, seen, match, query_norm)
 
         self._enrich_logos_from_lolesports(matches)
         matches.sort(key=lambda item: (0 if item.get("state") == "inProgress" else 1, item.get("datetime", "")))
         if matches:
             sources = {match.get("source", "") for match in matches}
-            return matches, "LoLEsports + Leaguepedia" if "Leaguepedia" in sources else "LoLEsports"
+            label = "Liquipedia + LoLEsports" if "Liquipedia" in sources else "LoLEsports"
+            if "Leaguepedia" in sources:
+                label += " + Leaguepedia"
+            return matches, label
         return self._demo_matches(query), "demo"
 
     def fetch_lolesports_live_stats(self, game_id: str | None) -> dict:
@@ -762,12 +816,34 @@ class DataFetcher:
             return
         if query and query not in match["team1"].lower() and query not in match["team2"].lower():
             return
-        teams_key = "|".join(sorted([_team_key(match["team1"]), _team_key(match["team2"])]))
-        key = f"{teams_key}|{match.get('datetime', '')[:10]}"
+        key = schedule_identity_key(match)
         if key in seen:
             return
         seen.add(key)
         matches.append(match)
+
+    def _upsert_schedule_match(self, matches: list, seen: set, match: dict | None, query: str) -> None:
+        """Merge live LoLEsports rows into an existing Liquipedia slot when possible."""
+        if not match:
+            return
+        if query and query not in match["team1"].lower() and query not in match["team2"].lower():
+            return
+        key = schedule_identity_key(match)
+        if key in seen:
+            for index, existing in enumerate(matches):
+                if schedule_identity_key(existing) != key:
+                    continue
+                merged = dict(existing)
+                if match.get("state") == "inProgress":
+                    merged.update(match)
+                    merged["datetime"] = existing.get("datetime", match.get("datetime"))
+                    merged["datetime_brt"] = existing.get("datetime_brt", match.get("datetime_brt"))
+                    merged["datetime_obj"] = existing.get("datetime_obj", match.get("datetime_obj"))
+                    merged["schedule_authority"] = existing.get("schedule_authority", match.get("source"))
+                matches[index] = merged
+                return
+            return
+        self._append_unique(matches, seen, match, query)
 
     def _remember_team_logo(self, team: str, image: str) -> None:
         key = _team_key(team)
@@ -1012,9 +1088,9 @@ class DataFetcher:
             return []
 
         parsed: list[dict] = []
-        now = datetime.now(timezone.utc)
-        window_start = now - timedelta(hours=5)
-        window_end = now + timedelta(hours=72)
+        now_brt_dt = now_brt()
+        window_start = (now_brt_dt - timedelta(hours=5)).astimezone(timezone.utc)
+        window_end = (now_brt_dt + timedelta(hours=72)).astimezone(timezone.utc)
 
         for code, league_id in self.LS_LEAGUES.items():
             try:
@@ -1104,6 +1180,51 @@ class DataFetcher:
 
         return parsed
 
+    def _fetch_liquipedia_true_schedule(self) -> list[dict]:
+        """Liquipedia agenda for LCK, LPL and CBLOL (source of truth for date/teams)."""
+        now_brt_dt = now_brt()
+        window_start = (now_brt_dt - timedelta(hours=5)).astimezone(timezone.utc)
+        window_end = (now_brt_dt + timedelta(hours=72)).astimezone(timezone.utc)
+        matches: list[dict] = []
+
+        for row in fetch_liquipedia_schedule_raw():
+            code = row.get("league_code", "_unknown")
+            if code not in LIQUIPEDIA_SCHEDULE_LEAGUES:
+                continue
+            dt = row.get("datetime_brt")
+            if not isinstance(dt, datetime):
+                dt = parse_to_brt(row.get("datetime"))
+            if not dt:
+                continue
+            dt_utc = dt.astimezone(timezone.utc)
+            if dt_utc < window_start or dt_utc > window_end:
+                continue
+
+            t1 = fix_name(row.get("team1", ""))
+            t2 = fix_name(row.get("team2", ""))
+            if not t1 or not t2 or t1.lower() == t2.lower():
+                continue
+            if code == "lpl" and not is_verified_lpl_match(t1, t2):
+                continue
+
+            best_of = str(row.get("best_of") or "3")
+            tournament = row.get("tournament") or get_league_info(code)["name"]
+            item = self._mk(
+                t1,
+                t2,
+                code,
+                get_league_info(code),
+                dt,
+                "unstarted",
+                tournament,
+                best_of,
+                source="Liquipedia",
+            )
+            item["schedule_authority"] = "Liquipedia"
+            item["liquipedia_tournament"] = tournament
+            matches.append(item)
+        return matches
+
     def _fetch_leaguepedia_schedule(self, query: str = "") -> list[dict]:
         cache_key = query.strip().lower() or "__all__"
         cached = _LEAGUEPEDIA_CACHE.get(cache_key)
@@ -1165,7 +1286,7 @@ class DataFetcher:
             return [dict(match) for match in cached[1]] if cached else []
 
     def _fetch_liquipedia_schedule(self, query: str = "") -> list[dict]:
-        return self._fetch_leaguepedia_schedule(query)
+        return self._fetch_liquipedia_true_schedule()
 
     def _demo_matches(self, query: str = "") -> list[dict]:
         base = now_brt()
@@ -1215,6 +1336,7 @@ class DataFetcher:
             "is_main_league": league_info.get("main", True),
             "datetime": dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "datetime_brt": dt.strftime("%d/%m %H:%M"),
+            "datetime_brt_date": dt.strftime("%Y-%m-%d"),
             "datetime_obj": dt,
             "team1": fix_name(team1),
             "team2": fix_name(team2),

@@ -90,10 +90,8 @@ class OddsPapiClient:
     def fetch_lol_odds_for_matches(self, matches: list[dict], bookmaker: str = "pinnacle") -> dict[str, dict]:
         """Return odds keyed by normalized team pair.
 
-        The most reliable flow is:
-        1. Ask OddsPapi for LoL fixtures with odds in the next ~48h.
-        2. Match those fixtures against PandaScore teams.
-        3. Pull detailed odds for the matched fixture.
+        Fixtures are matched only when both team names align exactly with the schedule
+        (normalized pair or identical display names). Approximate text matching is disabled.
         """
         if not self.configured or not matches:
             return {}
@@ -106,7 +104,7 @@ class OddsPapiClient:
         for match in matches:
             team1 = match.get("team1", "")
             team2 = match.get("team2", "")
-            fixture = self._find_fixture(fixtures, team1, team2)
+            fixture = self._find_fixture(fixtures, team1, team2, match)
             if not fixture:
                 continue
             odds_payload = self._fetch_fixture_odds(str(fixture.get("fixtureId")), bookmaker)
@@ -204,19 +202,36 @@ class OddsPapiClient:
         )
         return payload if isinstance(payload, list) else []
 
-    def _find_fixture(self, fixtures: list[dict], team1: str, team2: str) -> dict | None:
+    def _find_fixture(self, fixtures: list[dict], team1: str, team2: str, match: dict | None = None) -> dict | None:
         desired_key = _pair_key(team1, team2)
-        n1 = _norm(team1)
-        n2 = _norm(team2)
+        n1_raw = (team1 or "").strip().lower()
+        n2_raw = (team2 or "").strip().lower()
+        match = match or {}
+        id1 = str(match.get("panda_team1_id") or match.get("team1_id") or "").strip()
+        id2 = str(match.get("panda_team2_id") or match.get("team2_id") or "").strip()
+
         for fixture in fixtures:
             participant1 = fixture.get("participant1Name") or fixture.get("participant1ShortName") or ""
             participant2 = fixture.get("participant2Name") or fixture.get("participant2ShortName") or ""
-            if _pair_key(participant1, participant2) == desired_key:
+            if _pair_key(participant1, participant2) != desired_key:
+                continue
+
+            p1_raw = participant1.strip().lower()
+            p2_raw = participant2.strip().lower()
+            exact_names = (
+                (p1_raw == n1_raw and p2_raw == n2_raw)
+                or (p1_raw == n2_raw and p2_raw == n1_raw)
+            )
+            exact_norm = _norm(participant1) == _norm(team1) and _norm(participant2) == _norm(team2)
+            exact_norm_swap = _norm(participant1) == _norm(team2) and _norm(participant2) == _norm(team1)
+            if exact_names or exact_norm or exact_norm_swap:
                 return fixture
 
-            fixture_text = _norm(_flatten_text(fixture))
-            if n1 and n2 and n1 in fixture_text and n2 in fixture_text:
-                return fixture
+            fixture_id1 = str(fixture.get("participant1Id") or "").strip()
+            fixture_id2 = str(fixture.get("participant2Id") or "").strip()
+            if id1 and id2 and fixture_id1 and fixture_id2:
+                if {fixture_id1, fixture_id2} == {id1, id2}:
+                    return fixture
         return None
 
     def _fetch_fixture_odds(self, fixture_id: str, bookmaker: str) -> Any:
@@ -344,31 +359,27 @@ class OddsPapiClient:
             return None
 
         for container in _walk_dicts(payload):
-            container_text = _norm(_flatten_text(container))
-            if n1 not in container_text or n2 not in container_text:
+            p1 = _norm(container.get("participant1Name") or container.get("participant1ShortName") or "")
+            p2 = _norm(container.get("participant2Name") or container.get("participant2ShortName") or "")
+            if not p1 or not p2:
+                continue
+            if {_norm(team1), _norm(team2)} != {p1, p2}:
                 continue
 
             team1_price = None
             team2_price = None
-            generic_prices: list[float] = []
             for item in _walk_dicts(container):
                 price = _as_float(item.get("price") or item.get("odds") or item.get("decimal"))
                 if price is None:
                     continue
                 item_text = _norm(_flatten_text(item))
-                if n1 in item_text:
+                if n1 in item_text and n2 not in item_text:
                     team1_price = price
-                elif n2 in item_text:
+                elif n2 in item_text and n1 not in item_text:
                     team2_price = price
-                else:
-                    generic_prices.append(price)
 
             if team1_price and team2_price:
                 return round(team1_price, 2), round(team2_price, 2)
-
-            if not team1_price and not team2_price and len(generic_prices) >= 2:
-                # Fallback for bookmaker markets that label outcomes as home/away.
-                return round(generic_prices[0], 2), round(generic_prices[1], 2)
 
         return None
 
