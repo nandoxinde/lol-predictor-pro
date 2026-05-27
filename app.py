@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from html import escape
@@ -68,6 +69,9 @@ DEFAULT_STATE = {
     "twitch_custom": "",
 }
 DATA_VERSION = "series-memory-odds-v14"
+AUTO_REFRESH_SECONDS = 60
+MATCHES_CACHE_LIVE_SECONDS = 60
+MATCHES_CACHE_IDLE_SECONDS = 300
 
 if "state_initialized" not in st.session_state:
     profile = _load_profile()
@@ -153,6 +157,17 @@ def _five_minute_key() -> str:
     return now.strftime("%Y%m%d%H") + str(now.minute // 5)
 
 
+def _time_bucket(seconds: int) -> str:
+    return str(int(time.time()) // max(1, int(seconds)))
+
+
+def _matches_window_seconds() -> int:
+    current = st.session_state.get("matches") or []
+    has_live = any(str(item.get("state", "")).lower() in {"inprogress", "in_progress", "live"} for item in current)
+    return MATCHES_CACHE_LIVE_SECONDS if has_live else MATCHES_CACHE_IDLE_SECONDS
+
+
+@st.cache_data(ttl=MATCHES_CACHE_IDLE_SECONDS, show_spinner=False)
 def _load_matches_cached(cache_key: str, query: str = "") -> tuple[list[dict], str]:
     return DataFetcher().cargo_search(query)
 
@@ -728,6 +743,23 @@ def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dic
         )
 
 
+@st.fragment(run_every=AUTO_REFRESH_SECONDS)
+def _run_auto_refresh_cycle() -> None:
+    """Reexecuta o app a cada 60s para atualizar agenda/cards sem ação manual."""
+    now_ts = int(time.time())
+    last_cycle = int(st.session_state.get("auto_refresh_last_cycle_ts", 0) or 0)
+    if last_cycle == 0:
+        st.session_state.auto_refresh_last_cycle_ts = now_ts
+        return
+    if now_ts - last_cycle >= AUTO_REFRESH_SECONDS:
+        st.session_state.auto_refresh_last_cycle_ts = now_ts
+        st.session_state.auto_refresh_reason = "interval_60s"
+        st.rerun()
+
+
+_run_auto_refresh_cycle()
+
+
 profile = st.session_state.get("profile") or _load_profile()
 display_name = profile.get("display_name", "Fernando")
 banca_ini = float(st.session_state.banca_ini)
@@ -899,7 +931,12 @@ if st.session_state.selected_match:
 
 current_query = st.session_state.get("match_query", "")
 with st.spinner("Carregando agenda oficial..."):
-    st.session_state.matches, st.session_state.matches_source = _load_matches_cached(_minute_key(), current_query)
+    matches_window = _matches_window_seconds()
+    matches_bucket = _time_bucket(matches_window)
+    st.session_state.matches, st.session_state.matches_source = _load_matches_cached(
+        f"{matches_window}:{matches_bucket}",
+        current_query,
+    )
 
 all_matches = list(st.session_state.matches)
 oddspapi_odds = _load_oddspapi_cached(_five_minute_key(), all_matches)
