@@ -902,36 +902,52 @@ def _extract_youtube_embed(value: str) -> tuple[str, str]:
     return f"https://www.youtube.com/embed/{raw}?autoplay=0&rel=0", f"https://www.youtube.com/watch?v={raw}"
 
 
-def _iframe_player(src: str, height: int = 340) -> None:
+LIVE_STREAM_PLAYER_KEY = "live_stream_player"
+
+
+def _stream_match_scope(match: dict, t1: str = "", t2: str = "") -> str:
+    return str(
+        match.get("lolesports_event_id")
+        or match.get("panda_id")
+        or match.get("id")
+        or f"{t1}_{t2}"
+    )
+
+
+def _init_live_stream_state(scope: str) -> dict:
+    state = st.session_state.get(LIVE_STREAM_PLAYER_KEY)
+    if not isinstance(state, dict) or state.get("scope") != scope:
+        state = {
+            "scope": scope,
+            "fingerprint": "",
+            "html": "",
+            "platform": "",
+            "value": "",
+            "external_url": "",
+            "footer_html": "",
+            "button_label": "",
+            "height": 340,
+        }
+        st.session_state[LIVE_STREAM_PLAYER_KEY] = state
+    return state
+
+
+def _build_iframe_player_html(src: str, height: int = 340) -> str:
     safe_src = escape(src, quote=True)
-    components.html(
+    return (
         f'''<!DOCTYPE html><html><head><style>
         *{{margin:0;padding:0;box-sizing:border-box;}}
         html,body{{background:#000;width:100%;height:100%;overflow:hidden;}}
         iframe{{width:100%;height:{height}px;border:0;display:block;background:#000;}}
         </style></head><body>
         <iframe src="{safe_src}" allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>
-        </body></html>''',
-        height=height + 4,
-        scrolling=False,
+        </body></html>'''
     )
 
 
-def _render_stream_fallback_footer(note_html: str, external_url: str, button_label: str) -> None:
-    """Legenda e atalho externos abaixo do iframe — sem sobrepor controles do player."""
-    st.markdown(
-        f'<small style="display:block;font-size:12px;color:#888888;text-align:center;'
-        f'margin:10px 4px 6px;line-height:1.45;">{note_html}</small>',
-        unsafe_allow_html=True,
-    )
-    _left, _center, _right = st.columns([1, 2, 1])
-    with _center:
-        st.link_button(button_label, external_url, use_container_width=True)
-
-
-def _render_twitch_iframe(channel: str, height: int = 340) -> None:
-    ch = _resolve_channel(channel)
-    components.html(
+def _build_twitch_player_html(channel: str, height: int = 340) -> str:
+    ch = _resolve_channel(channel).replace("\\", "\\\\").replace('"', '\\"')
+    return (
         f'''<!DOCTYPE html><html><head>
         <style>
         *{{margin:0;padding:0;box-sizing:border-box;}}
@@ -963,12 +979,117 @@ def _render_twitch_iframe(channel: str, height: int = 340) -> None:
           + "&autoplay=false&muted=false";
         document.getElementById("player").innerHTML =
           '<iframe src="' + src + '" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen="true"></iframe>';
-        </script></body></html>''',
-        height=height + 4,
-        scrolling=False,
+        </script></body></html>'''
     )
 
 
+def _compute_stream_embed(
+    platform: str,
+    value: str,
+    channel_or_code: str,
+    match: dict,
+    height: int,
+) -> dict | None:
+    if platform == "SOOP":
+        channel = value or "afchall"
+        src = channel if channel.startswith("http") else f"https://play.sooplive.com/{channel}"
+        return {
+            "fingerprint": f"soop:{src}:{height}",
+            "html": _build_iframe_player_html(src, height),
+            "external_url": src,
+            "footer_html": "",
+            "button_label": "Abrir SOOP em nova aba",
+        }
+    if platform == "YouTube":
+        embed_url, direct = _extract_youtube_embed(value)
+        if not embed_url:
+            return None
+        return {
+            "fingerprint": f"youtube:{embed_url}:{height}",
+            "html": _build_iframe_player_html(embed_url, height),
+            "external_url": direct,
+            "footer_html": "",
+            "button_label": "Abrir YouTube em nova aba",
+        }
+    if platform == "Kick":
+        channel = value.replace("https://kick.com/", "").replace("kick.com/", "").split("?")[0].strip("/")
+        if not channel:
+            return None
+        src = f"https://player.kick.com/{channel}?autoplay=false"
+        return {
+            "fingerprint": f"kick:{src}:{height}",
+            "html": _build_iframe_player_html(src, height),
+            "external_url": f"https://kick.com/{channel}",
+            "footer_html": "",
+            "button_label": "Abrir Kick em nova aba",
+        }
+    if platform == "Twitch":
+        ch = _resolve_channel(value or channel_or_code)
+        twitch_url = f"https://www.twitch.tv/{ch}"
+        return {
+            "fingerprint": f"twitch:{ch}:{height}",
+            "html": _build_twitch_player_html(ch, height),
+            "external_url": twitch_url,
+            "footer_html": (
+                "Se o player continuar bloqueado pelo navegador, abra direto em "
+                f'<a href="{escape(twitch_url, quote=True)}" target="_blank" rel="noopener" '
+                f'style="color:#9146FF;text-decoration:none;">twitch.tv/{escape(ch)}</a>.'
+            ),
+            "button_label": "Abrir Twitch em nova aba",
+            "twitch_channel": ch,
+        }
+    return None
+
+
+def _sync_live_stream_player(scope: str, embed: dict | None, height: int) -> dict:
+    state = _init_live_stream_state(scope)
+    state["height"] = height
+    if not embed:
+        state["fingerprint"] = ""
+        state["html"] = ""
+        state["external_url"] = ""
+        state["footer_html"] = ""
+        state["button_label"] = ""
+        return state
+
+    fingerprint = embed["fingerprint"]
+    if state.get("fingerprint") != fingerprint:
+        state["fingerprint"] = fingerprint
+        state["html"] = embed["html"]
+        state["external_url"] = embed.get("external_url", "")
+        state["footer_html"] = embed.get("footer_html", "")
+        state["button_label"] = embed.get("button_label", "")
+        state["platform"] = embed.get("platform", state.get("platform", ""))
+        state["value"] = embed.get("value", state.get("value", ""))
+    return state
+
+
+def _render_persistent_stream_iframe(state: dict) -> None:
+    html = state.get("html") or ""
+    if not html:
+        return
+    player_height = int(state.get("height") or 340)
+    with st.container(key=LIVE_STREAM_PLAYER_KEY):
+        components.html(
+            html,
+            height=player_height + 4,
+            scrolling=False,
+        )
+
+
+def _render_stream_fallback_footer(note_html: str, external_url: str, button_label: str) -> None:
+    """Legenda e atalho externos abaixo do iframe — sem sobrepor controles do player."""
+    st.markdown(
+        f'<small style="display:block;font-size:12px;color:#888888;text-align:center;'
+        f'margin:10px 4px 6px;line-height:1.45;">{note_html}</small>',
+        unsafe_allow_html=True,
+    )
+    _left, _center, _right = st.columns([1, 2, 1])
+    with _center:
+        st.link_button(button_label, external_url, use_container_width=True)
+
+
+@st.fragment
 def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, match=None):
     match = match or {}
     default_platform = _default_video_platform(match)
@@ -1005,59 +1126,59 @@ def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, 
     )
     value_key = f"video_value_{platform}_{match.get('lolesports_event_id') or match.get('panda_id') or t1[:4] + t2[:4]}"
     default_value = _default_stream_value(platform, channel_or_code, match)
+    if value_key not in st.session_state:
+        st.session_state[value_key] = default_value
     value = st.text_input(
         "",
-        value=st.session_state.get(value_key, default_value),
         key=value_key,
         placeholder="Canal ou link da transmissão",
         label_visibility="collapsed",
     ).strip()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    if platform == "SOOP":
-        channel = value or "afchall"
-        src = channel if channel.startswith("http") else f"https://play.sooplive.com/{channel}"
-        direct = src
-        _iframe_player(src, height)
-        st.link_button("Abrir SOOP em nova aba", direct, use_container_width=True)
-    elif platform == "YouTube":
-        embed_url, direct = _extract_youtube_embed(value)
-        if embed_url:
-            _iframe_player(embed_url, height)
-        else:
-            st.info("Cole o link do vídeo/live do YouTube ou o ID do vídeo para embutir aqui.")
-        if direct:
-            st.link_button("Abrir YouTube em nova aba", direct, use_container_width=True)
-    elif platform == "Kick":
-        channel = value.replace("https://kick.com/", "").replace("kick.com/", "").split("?")[0].strip("/")
-        if channel:
-            _iframe_player(f"https://player.kick.com/{channel}?autoplay=false", height)
-            st.link_button("Abrir Kick em nova aba", f"https://kick.com/{channel}", use_container_width=True)
-        else:
-            st.info("Informe o canal da Kick.")
-    elif platform == "Link externo":
+    scope = _stream_match_scope(match, t1, t2)
+    embed = _compute_stream_embed(platform, value, channel_or_code, match, height)
+    if embed is not None:
+        embed["platform"] = platform
+        embed["value"] = value
+    player_state = _sync_live_stream_player(scope, embed, height)
+
+    if platform == "Link externo":
         if value.startswith("http"):
             st.info("Esta plataforma pode bloquear iframe. Use o botão abaixo para abrir direto.")
             st.link_button("Abrir transmissão", value, use_container_width=True)
         else:
             st.info("Cole o link completo da transmissão.")
-    else:
-        ch = _resolve_channel(value or channel_or_code)
-        twitch_url = f"https://www.twitch.tv/{ch}"
-        st.markdown(
-            '<div style="background:#000;border-left:1px solid #1A2D4A;border-right:1px solid #1A2D4A;">',
-            unsafe_allow_html=True,
-        )
-        _render_twitch_iframe(ch, height)
-        st.markdown("</div>", unsafe_allow_html=True)
-        _render_stream_fallback_footer(
-            "Se o player continuar bloqueado pelo navegador, abra direto em "
-            f'<a href="{escape(twitch_url, quote=True)}" target="_blank" rel="noopener" '
-            f'style="color:#9146FF;text-decoration:none;">twitch.tv/{escape(ch)}</a>.',
-            twitch_url,
-            "Abrir Twitch em nova aba",
-        )
-        st.session_state.twitch_custom = ch
+        return
+
+    if platform == "YouTube" and embed is None:
+        st.info("Cole o link do vídeo/live do YouTube ou o ID do vídeo para embutir aqui.")
+        return
+
+    if platform == "Kick" and embed is None:
+        st.info("Informe o canal da Kick.")
+        return
+
+    if not player_state.get("html"):
+        return
+
+    st.markdown(
+        '<div style="background:#000;border-left:1px solid #1A2D4A;border-right:1px solid #1A2D4A;">',
+        unsafe_allow_html=True,
+    )
+    _render_persistent_stream_iframe(player_state)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    external_url = player_state.get("external_url") or ""
+    button_label = player_state.get("button_label") or "Abrir transmissão em nova aba"
+    footer_html = player_state.get("footer_html") or ""
+    if footer_html:
+        _render_stream_fallback_footer(footer_html, external_url, button_label)
+    elif external_url:
+        st.link_button(button_label, external_url, use_container_width=True)
+
+    if platform == "Twitch" and embed and embed.get("twitch_channel"):
+        st.session_state.twitch_custom = embed["twitch_channel"]
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
 def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match=None, on_bet_click=None):
