@@ -917,6 +917,18 @@ def _iframe_player(src: str, height: int = 340) -> None:
     )
 
 
+def _render_stream_fallback_footer(note_html: str, external_url: str, button_label: str) -> None:
+    """Legenda e atalho externos abaixo do iframe — sem sobrepor controles do player."""
+    st.markdown(
+        f'<small style="display:block;font-size:12px;color:#888888;text-align:center;'
+        f'margin:10px 4px 6px;line-height:1.45;">{note_html}</small>',
+        unsafe_allow_html=True,
+    )
+    _left, _center, _right = st.columns([1, 2, 1])
+    with _center:
+        st.link_button(button_label, external_url, use_container_width=True)
+
+
 def _render_twitch_iframe(channel: str, height: int = 340) -> None:
     ch = _resolve_channel(channel)
     components.html(
@@ -925,14 +937,8 @@ def _render_twitch_iframe(channel: str, height: int = 340) -> None:
         *{{margin:0;padding:0;box-sizing:border-box;}}
         html,body{{background:#000;width:100%;height:100%;overflow:hidden;}}
         iframe{{width:100%;height:{height}px;border:0;display:block;background:#000;}}
-        .fallback{{position:absolute;inset:auto 14px 14px 14px;color:#c8d4e8;font:12px Inter,Arial,sans-serif;
-          background:rgba(9,12,20,.86);border:1px solid #1A2D4A;border-radius:8px;padding:10px;}}
-        .fallback a{{color:#9146FF;font-weight:800;}}
         </style></head><body>
         <div id="player"></div>
-        <div class="fallback">Se o player continuar bloqueado pelo navegador, abra direto:
-          <a href="https://www.twitch.tv/{ch}" target="_blank" rel="noopener">twitch.tv/{ch}</a>
-        </div>
         <script>
         function getParentHost() {{
           try {{
@@ -1037,8 +1043,20 @@ def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, 
             st.info("Cole o link completo da transmissão.")
     else:
         ch = _resolve_channel(value or channel_or_code)
+        twitch_url = f"https://www.twitch.tv/{ch}"
+        st.markdown(
+            '<div style="background:#000;border-left:1px solid #1A2D4A;border-right:1px solid #1A2D4A;">',
+            unsafe_allow_html=True,
+        )
         _render_twitch_iframe(ch, height)
-        st.link_button("Abrir Twitch em nova aba", f"https://www.twitch.tv/{ch}", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        _render_stream_fallback_footer(
+            "Se o player continuar bloqueado pelo navegador, abra direto em "
+            f'<a href="{escape(twitch_url, quote=True)}" target="_blank" rel="noopener" '
+            f'style="color:#9146FF;text-decoration:none;">twitch.tv/{escape(ch)}</a>.',
+            twitch_url,
+            "Abrir Twitch em nova aba",
+        )
         st.session_state.twitch_custom = ch
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
