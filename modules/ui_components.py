@@ -518,57 +518,59 @@ def render_match_list(matches: list, analysis_map: dict,
     return None
 
 # ─── Sala de Operação ─────────────────────────────────────────────────
-def _compute_series_score(match: dict, analysis: dict) -> tuple[int | None, int | None]:
-    """
-    Retorna (score_time1, score_time2) quando disponível.
+def _team_names_match(left: str, right: str) -> bool:
+    from modules.data_fetcher import _team_key
 
-    Prioridade:
-    1) `analysis["series_memory"]["series_score"]` (PandaScore, Bo3/Bo5)
-    2) `match["games"]` (quando o upstream já embute histórico por mapa)
-    """
-    t1 = match.get("team1", "")
-    t2 = match.get("team2", "")
+    return _team_key(left) == _team_key(right)
+
+
+def _resolve_series_context(match: dict, analysis: dict) -> dict:
+    from modules.data_fetcher import DataFetcher
+
+    ctx = match.get("series_context") or DataFetcher().fetch_match_series_context(match)
+    score = dict(ctx.get("series_score") or match.get("series_score") or {})
 
     memory = analysis.get("series_memory") or {}
-    if memory.get("status") == "ok":
-        s = memory.get("series_score") or {}
-        try:
-            a = s.get("team1")
-            b = s.get("team2")
-            if a is not None and b is not None:
-                return int(a), int(b)
-        except Exception:
-            pass
+    if memory.get("status") == "ok" and memory.get("series_score"):
+        score = dict(memory.get("series_score") or score)
 
-    games = match.get("games")
-    if isinstance(games, list) and t1 and t2:
-        score1 = 0
-        score2 = 0
-        for g in games:
-            winner = g.get("winner") or g.get("winning_team") or g.get("won") or ""
-            w = str(winner).strip()
-            wl = w.lower()
-            if not w:
-                continue
-            if wl in {"team1", "t1", "blue", "blue_team", t1.lower()}:
-                score1 += 1
-            elif wl in {"team2", "t2", "red", "red_team", t2.lower()}:
-                score2 += 1
-        if score1 or score2:
-            return score1, score2
+    if score.get("team1") is None and score.get("team2") is None:
+        games = ctx.get("games") or match.get("games") or []
+        completed = [
+            g for g in games
+            if str(g.get("state", "")).lower() in {"completed", "complete", "finished"}
+        ]
+        if completed:
+            t1 = match.get("team1", "")
+            t2 = match.get("team2", "")
+            s1 = s2 = 0
+            for game in completed:
+                winner = game.get("winner_team") or game.get("winner") or ""
+                if winner and t1 and _team_names_match(winner, t1):
+                    s1 += 1
+                elif winner and t2 and _team_names_match(winner, t2):
+                    s2 += 1
+            if s1 or s2:
+                score = {"team1": s1, "team2": s2}
 
-    return None, None
+    ctx["series_score"] = {
+        "team1": int(score.get("team1", 0) or 0),
+        "team2": int(score.get("team2", 0) or 0),
+    }
+    return ctx
 
 
-def _render_series_score_top(match: dict, analysis: dict) -> None:
+def _render_series_score_top(match: dict, analysis: dict, series_ctx: dict) -> None:
     t1 = match.get("team1", "Time 1")
     t2 = match.get("team2", "Time 2")
-    s1, s2 = _compute_series_score(match, analysis)
+    score = series_ctx.get("series_score") or {}
+    s1 = int(score.get("team1", 0) or 0)
+    s2 = int(score.get("team2", 0) or 0)
+    current_map = series_ctx.get("current_map")
+    best_of = series_ctx.get("best_of") or match.get("best_of", "3")
 
-    if s1 is None or s2 is None:
-        label = "PLACAR DA SÉRIE: —"
-    else:
-        label = f"PLACAR DA SÉRIE: {t1} {s1} x {s2} {t2}"
+    label = f"PLACAR DA SÉRIE: {escape(t1)} {s1} x {s2} {escape(t2)}"
+    map_hint = f" · Mapa {current_map} de Bo{best_of}" if current_map else ""
 
     st.markdown(
         f'<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:10px;'
@@ -576,16 +578,102 @@ def _render_series_score_top(match: dict, analysis: dict) -> None:
         f'<div style="font-size:12px;color:#6F7888;font-weight:800;margin-bottom:6px;">'
         f'🧾 Série (atualizado ao vivo)</div>'
         f'<div style="font-size:16px;font-weight:900;color:#F5F7FA;">{label}</div>'
+        f'<div style="font-size:11px;color:#5A7090;margin-top:4px;">'
+        f'Fonte: LoLEsports / API oficial{escape(map_hint)}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
 
+def _merge_previous_map_from_memory(previous_map: dict | None, analysis: dict, match: dict) -> dict | None:
+    memory = analysis.get("series_memory") or {}
+    if memory.get("status") != "ok" or not memory.get("maps"):
+        return previous_map
+
+    last = memory["maps"][-1]
+    t1 = match.get("team1", "")
+    t2 = match.get("team2", "")
+    winner_side = last.get("winner")
+    winner_team = t1 if winner_side == "team1" else t2 if winner_side == "team2" else ""
+
+    kills = last.get("kills") or {}
+    merged = dict(previous_map or {})
+    merged.update({
+        "map_number": last.get("number") or merged.get("map_number") or 1,
+        "winner_team": winner_team or merged.get("winner_team", ""),
+        "team1": t1,
+        "team2": t2,
+        "kills": {
+            "team1": int(kills.get("team1") or merged.get("kills", {}).get("team1", 0) or 0),
+            "team2": int(kills.get("team2") or merged.get("kills", {}).get("team2", 0) or 0),
+        },
+        "source": "PandaScore + LoLEsports",
+    })
+    return merged
+
+
+def _render_previous_map_history(match: dict, analysis: dict, series_ctx: dict) -> None:
+    current_map = int(series_ctx.get("current_map") or 1)
+    with st.expander("📊 Detalhes do Mapa Anterior (Match History)", expanded=True):
+        if current_map <= 1:
+            st.info("Série iniciada agora. Aguardando conclusão do primeiro mapa para gerar histórico.")
+            return
+
+        previous = _merge_previous_map_from_memory(series_ctx.get("previous_map"), analysis, match)
+        if not previous:
+            st.warning("Mapa anterior finalizado, mas o histórico detalhado ainda não está disponível.")
+            return
+
+        t1 = previous.get("team1", match.get("team1", "Time 1"))
+        t2 = previous.get("team2", match.get("team2", "Time 2"))
+        map_no = previous.get("map_number", current_map - 1)
+        winner = previous.get("winner_team") or "—"
+        kills = previous.get("kills") or {}
+        gold = previous.get("gold") or {}
+        duration = previous.get("duration_minutes")
+
+        k1 = int(kills.get("team1", 0) or 0)
+        k2 = int(kills.get("team2", 0) or 0)
+        g1 = int(gold.get("team1", 0) or 0)
+        g2 = int(gold.get("team2", 0) or 0)
+        duration_txt = f"{duration:.1f} min" if isinstance(duration, (int, float)) and duration else "—"
+
+        st.markdown(
+            f'<div style="background:#0F1520;border:1px solid #202733;border-radius:10px;'
+            f'padding:10px 12px;margin-bottom:10px;">'
+            f'<div style="font-size:13px;font-weight:900;color:#C8D4E8;">'
+            f'Mapa {map_no} — Vencedor: {escape(winner)}</div>'
+            f'<div style="font-size:12px;color:#7A8FAA;margin-top:6px;">'
+            f'Abates: {escape(t1)} {k1} x {k2} {escape(t2)} · '
+            f'Ouro final: {g1/1000:.1f}k x {g2/1000:.1f}k · Duração: {escape(duration_txt)}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        players = previous.get("players") or []
+        if players:
+            rows = []
+            for item in players:
+                player = item.get("player") or item.get("name") or "Jogador"
+                champion = item.get("champion") or "—"
+                rows.append(f"• {escape(player)} jogou de {escape(str(champion))}")
+            st.markdown(
+                '<div style="font-size:12px;color:#C8D4E8;line-height:1.7;">'
+                + "<br>".join(rows)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Campeões do mapa anterior indisponíveis no feed oficial neste momento.")
+
+
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                            roster_t1, roster_t2, bankroll, target,
                            twitch_channel="", live_stats=None, on_bet_click=None):
-    from modules.data_fetcher import generate_decision_card
+    from modules.data_fetcher import DataFetcher, generate_decision_card
     t1  = match["team1"]; t2 = match["team2"]
+    series_ctx = _resolve_series_context(match, analysis)
+    match = {**match, "series_context": series_ctx, "series_score": series_ctx.get("series_score")}
     lg  = match.get("league_display", match.get("league",""))
     lc  = match.get("league_code","_unknown")
     bo  = match.get("best_of","3")
@@ -612,7 +700,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
             f'<span style="font-size:11px;color:#3A4D65;margin-left:12px;">'
             f'{lg} · Bo{bo}</span></div>', unsafe_allow_html=True)
 
-    _render_series_score_top(match, analysis)
+    _render_series_score_top(match, analysis, series_ctx)
 
     st.markdown('<hr style="margin:8px 0 12px;">', unsafe_allow_html=True)
 
@@ -630,6 +718,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
 
     st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
     _render_lolesports_live_stats(match, live_stats or {})
+    _render_previous_map_history(match, analysis, series_ctx)
     if live_stats:
         st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
     _render_series_memory(analysis, t1, t2)

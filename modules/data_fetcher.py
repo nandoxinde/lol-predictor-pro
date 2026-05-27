@@ -36,6 +36,8 @@ TEAM_STATS_CARGO_CACHE_TTL = 30 * 60
 _TEAM_STATS_CARGO_CACHE: dict[str, tuple[datetime, dict]] = {}
 SERIES_MEMORY_CACHE_TTL = 60
 _SERIES_MEMORY_CACHE: dict[str, tuple[datetime, dict]] = {}
+SERIES_CONTEXT_CACHE_TTL = 30
+_SERIES_CONTEXT_CACHE: dict[str, tuple[datetime, dict]] = {}
 
 
 def now_brt() -> datetime:
@@ -534,7 +536,343 @@ class DataFetcher:
                 "red": build_team("redTeam"),
             }
         except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+            return {"status": "error", "message": exc}
+
+    def fetch_match_series_context(self, match: dict) -> dict:
+        """Placar da série, subgames e resumo do mapa anterior (LoLEsports/PandaScore)."""
+        event_id = match.get("lolesports_event_id")
+        cache_key = f"series_ctx:{event_id or match.get('panda_id') or schedule_identity_key(match)}"
+        cached = _SERIES_CONTEXT_CACHE.get(cache_key)
+        if cached and (datetime.now(timezone.utc) - cached[0]).total_seconds() < SERIES_CONTEXT_CACHE_TTL:
+            return dict(cached[1])
+
+        ctx = self._build_series_context(match)
+        _SERIES_CONTEXT_CACHE[cache_key] = (datetime.now(timezone.utc), dict(ctx))
+        return ctx
+
+    def _build_series_context(self, match: dict) -> dict:
+        t1 = fix_name(match.get("team1", ""))
+        t2 = fix_name(match.get("team2", ""))
+        strategy = match.get("strategy") or {}
+        if not strategy.get("count"):
+            strategy = {"type": "bestOf", "count": int(str(match.get("best_of") or "3").split(".")[0] or 3)}
+
+        games = list(match.get("games") or [])
+        series_score = match.get("series_score") or {}
+        teams_meta = match.get("lolesports_teams") or []
+
+        event_id = match.get("lolesports_event_id")
+        if event_id and LOLESPORTS_KEY:
+            event = self._fetch_lolesports_event_details(event_id)
+            if event:
+                event_match = event.get("match") or {}
+                strategy = event_match.get("strategy") or strategy
+                teams_meta = event_match.get("teams") or teams_meta
+                games = self._normalize_lolesports_games(
+                    event_match.get("games") or games,
+                    teams_meta,
+                    t1,
+                    t2,
+                )
+                series_score = self._series_score_from_teams(teams_meta, t1, t2)
+
+        if not series_score and games:
+            series_score = self._series_score_from_completed_games(games, t1, t2)
+
+        completed = [
+            g for g in games
+            if str(g.get("state", "")).lower() in {"completed", "complete", "finished"}
+        ]
+        completed.sort(key=lambda item: int(item.get("number") or 0))
+
+        active = next(
+            (
+                g for g in games
+                if str(g.get("state", "")).lower() in {"inprogress", "in_progress", "live"}
+            ),
+            None,
+        )
+        current_map = int(active.get("number") or (len(completed) + 1)) if active else max(len(completed), 1)
+
+        previous_map = None
+        if completed:
+            last_completed = completed[-1]
+            winner_name = last_completed.get("winner_team")
+            if not winner_name and len(completed) == 1 and series_score:
+                if int(series_score.get("team1", 0)) > int(series_score.get("team2", 0)):
+                    winner_name = t1
+                elif int(series_score.get("team2", 0)) > int(series_score.get("team1", 0)):
+                    winner_name = t2
+            previous_map = self._summarize_lolesports_completed_game(
+                last_completed,
+                teams_meta,
+                t1,
+                t2,
+                winner_name,
+            )
+
+        return {
+            "strategy": strategy,
+            "best_of": int(str(strategy.get("count") or match.get("best_of") or 3).split(".")[0] or 3),
+            "series_score": {
+                "team1": int(series_score.get("team1", 0) or 0),
+                "team2": int(series_score.get("team2", 0) or 0),
+            },
+            "games": games,
+            "completed_maps": len(completed),
+            "current_map": current_map,
+            "previous_map": previous_map,
+            "lolesports_teams": teams_meta,
+        }
+
+    def _fetch_lolesports_event_details(self, event_id: str | None) -> dict | None:
+        if not event_id or not LOLESPORTS_KEY:
+            return None
+        try:
+            response = self.live.get(
+                "https://esports-api.lolesports.com/persisted/gw/getEventDetails",
+                params={"hl": "pt-BR", "id": event_id},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                return None
+            return response.json().get("data", {}).get("event")
+        except Exception:
+            return None
+
+    def _series_score_from_teams(self, teams: list[dict], team1: str, team2: str) -> dict:
+        score = {"team1": 0, "team2": 0}
+        for team in teams or []:
+            name = fix_name(team.get("name", ""))
+            wins = int((team.get("result") or {}).get("gameWins") or 0)
+            if _team_key(name) == _team_key(team1):
+                score["team1"] = wins
+            elif _team_key(name) == _team_key(team2):
+                score["team2"] = wins
+        return score
+
+    def _series_score_from_completed_games(self, games: list[dict], team1: str, team2: str) -> dict:
+        score = {"team1": 0, "team2": 0}
+        for game in games:
+            if str(game.get("state", "")).lower() not in {"completed", "complete", "finished"}:
+                continue
+            winner = game.get("winner_team") or ""
+            if _team_key(winner) == _team_key(team1):
+                score["team1"] += 1
+            elif _team_key(winner) == _team_key(team2):
+                score["team2"] += 1
+        return score
+
+    def _normalize_lolesports_games(
+        self,
+        games_raw: list[dict],
+        teams: list[dict],
+        team1: str,
+        team2: str,
+    ) -> list[dict]:
+        team_by_id = {str(team.get("id")): fix_name(team.get("name", "")) for team in teams or []}
+        normalized: list[dict] = []
+        for raw in games_raw or []:
+            state = str(raw.get("state", "")).lower()
+            number = int(raw.get("number") or len(normalized) + 1)
+            winner_team = ""
+            for side in raw.get("teams") or []:
+                team_id = str(side.get("id", ""))
+                team_name = team_by_id.get(team_id, "")
+                if raw.get("winner_id") and str(raw.get("winner_id")) == team_id:
+                    winner_team = team_name
+            normalized.append({
+                "id": raw.get("id"),
+                "number": number,
+                "state": state,
+                "winner_team": winner_team,
+                "teams": raw.get("teams") or [],
+            })
+        return normalized
+
+    def _summarize_lolesports_completed_game(
+        self,
+        game: dict,
+        teams: list[dict],
+        team1: str,
+        team2: str,
+        winner_team: str | None,
+    ) -> dict:
+        game_id = game.get("id")
+        number = int(game.get("number") or 1)
+        team_by_id = {str(team.get("id")): fix_name(team.get("name", "")) for team in teams or []}
+
+        blue_name = red_name = ""
+        for side in game.get("teams") or []:
+            name = team_by_id.get(str(side.get("id", "")), "")
+            if str(side.get("side", "")).lower() == "blue":
+                blue_name = name
+            if str(side.get("side", "")).lower() == "red":
+                red_name = name
+
+        stats_payload = self._fetch_lolesports_game_snapshot(game_id) if game_id else {}
+        blue = stats_payload.get("blue") or {}
+        red = stats_payload.get("red") or {}
+
+        def side_for_team(team_name: str) -> str | None:
+            if _team_key(team_name) == _team_key(blue_name):
+                return "blue"
+            if _team_key(team_name) == _team_key(red_name):
+                return "red"
+            return None
+
+        t1_side = side_for_team(team1)
+        t2_side = side_for_team(team2)
+        t1_data = blue if t1_side == "blue" else red if t1_side == "red" else {}
+        t2_data = red if t1_side == "blue" else blue if t1_side == "red" else {}
+
+        duration_min = stats_payload.get("duration_minutes")
+        players = stats_payload.get("players") or []
+
+        return {
+            "map_number": number,
+            "winner_team": winner_team or game.get("winner_team") or "",
+            "team1": team1,
+            "team2": team2,
+            "kills": {
+                "team1": int(t1_data.get("kills") or 0),
+                "team2": int(t2_data.get("kills") or 0),
+            },
+            "gold": {
+                "team1": int(t1_data.get("total_gold") or 0),
+                "team2": int(t2_data.get("total_gold") or 0),
+            },
+            "duration_minutes": duration_min,
+            "players": players,
+        }
+
+    def _fetch_lolesports_game_snapshot(self, game_id: str | None) -> dict:
+        if not game_id:
+            return {}
+        try:
+            headers = {"User-Agent": "LoLPredictorPro/2.0"}
+            window = requests.get(
+                f"{self.LS_WINDOW}/{game_id}",
+                headers=headers,
+                timeout=10,
+            )
+            details = requests.get(
+                f"{self.LS_DETAILS}/{game_id}",
+                headers=headers,
+                timeout=10,
+            )
+            if window.status_code != 200:
+                return {}
+
+            window_data = window.json()
+            detail_data = details.json() if details.status_code == 200 else {}
+            frames = window_data.get("frames") or []
+            detail_frames = detail_data.get("frames") or []
+            if not frames:
+                return {}
+
+            frame = frames[-1]
+            detail_frame = detail_frames[-1] if detail_frames else {}
+            metadata = window_data.get("gameMetadata") or {}
+            participants_meta = (
+                (metadata.get("blueTeamMetadata") or {}).get("participantMetadata") or []
+            ) + (
+                (metadata.get("redTeamMetadata") or {}).get("participantMetadata") or []
+            )
+            meta_by_id = {item.get("participantId"): item for item in participants_meta}
+            participant_details = {
+                item.get("participantId"): item
+                for item in (detail_frame.get("participants") or [])
+                if item.get("participantId") is not None
+            }
+
+            def build_side(side_key: str) -> dict:
+                side = frame.get(side_key) or {}
+                players = []
+                for player in side.get("participants") or []:
+                    pid = player.get("participantId")
+                    meta = meta_by_id.get(pid, {})
+                    detail = participant_details.get(pid, {})
+                    players.append({
+                        "name": meta.get("summonerName") or f"Player {pid}",
+                        "champion": meta.get("championId") or "",
+                        "kills": int(player.get("kills") or detail.get("kills") or 0),
+                        "deaths": int(player.get("deaths") or detail.get("deaths") or 0),
+                        "assists": int(player.get("assists") or detail.get("assists") or 0),
+                        "gold": int(player.get("totalGold") or detail.get("totalGoldEarned") or 0),
+                    })
+                return {
+                    "kills": int(side.get("totalKills") or sum(p["kills"] for p in players)),
+                    "total_gold": int(side.get("totalGold") or sum(p["gold"] for p in players)),
+                    "towers": int(side.get("towers") or 0),
+                    "players": players,
+                }
+
+            duration_min = None
+            if len(frames) >= 2:
+                start_ts = frames[0].get("rfc460Timestamp")
+                end_ts = frames[-1].get("rfc460Timestamp")
+                start_min = self._timestamp_to_minutes(start_ts)
+                end_min = self._timestamp_to_minutes(end_ts)
+                if start_min is not None and end_min is not None and end_min >= start_min:
+                    duration_min = round(end_min - start_min, 1)
+
+            blue = build_side("blueTeam")
+            red = build_side("redTeam")
+            players = []
+            for label, side_name, data in (("blue", "Azul", blue), ("red", "Vermelho", red)):
+                for player in data.get("players") or []:
+                    players.append({
+                        "side": side_name,
+                        "player": player.get("name", ""),
+                        "champion": player.get("champion", ""),
+                    })
+
+            return {
+                "blue": blue,
+                "red": red,
+                "players": players,
+                "duration_minutes": duration_min,
+            }
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _timestamp_to_minutes(value) -> float | None:
+        if value is None:
+            return None
+        try:
+            if isinstance(value, (int, float)) or (isinstance(value, str) and str(value).strip().isdigit()):
+                ts = float(value)
+                if ts > 1e12:
+                    ts /= 1000.0
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            else:
+                text = str(value).strip().replace("Z", "+00:00")
+                dt = datetime.fromisoformat(text)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp() / 60.0
+        except Exception:
+            return None
+
+    def _attach_lolesports_series_fields(self, item: dict, event: dict) -> None:
+        event_match = event.get("match") or {}
+        teams = event_match.get("teams") or []
+        item["strategy"] = event_match.get("strategy") or {"type": "bestOf", "count": item.get("best_of", 3)}
+        item["lolesports_teams"] = teams
+        item["games"] = self._normalize_lolesports_games(
+            event_match.get("games") or [],
+            teams,
+            item.get("team1", ""),
+            item.get("team2", ""),
+        )
+        item["series_score"] = self._series_score_from_teams(
+            teams,
+            item.get("team1", ""),
+            item.get("team2", ""),
+        )
+        item["best_of"] = str((item["strategy"] or {}).get("count") or item.get("best_of") or 3)
 
     def fetch_series_memory(self, match: dict) -> dict:
         """Build short-lived momentum memory for MD3/MD5 series."""
@@ -556,11 +894,77 @@ class DataFetcher:
 
         if is_pandascore:
             data = self._fetch_pandascore_series_memory(match)
+        elif match.get("lolesports_event_id"):
+            data = self._fetch_lolesports_series_memory(match)
         else:
-            data = {"status": "unavailable", "source": "PandaScore", "reason": "Match sem ID PandaScore"}
+            data = {"status": "unavailable", "source": "LoLEsports", "reason": "Evento sem ID LoLEsports"}
 
         _SERIES_MEMORY_CACHE[cache_key] = (datetime.now(timezone.utc), dict(data))
         return data
+
+    def _fetch_lolesports_series_memory(self, match: dict) -> dict:
+        ctx = self.fetch_match_series_context(match)
+        score = ctx.get("series_score") or {}
+        games = [
+            game for game in ctx.get("games") or []
+            if str(game.get("state", "")).lower() in {"completed", "complete", "finished"}
+        ]
+        if not games and not score.get("team1") and not score.get("team2"):
+            return {
+                "status": "empty",
+                "source": "LoLEsports",
+                "maps_played": 0,
+                "reason": "Nenhum mapa finalizado na série ainda",
+            }
+
+        t1 = match.get("team1", "")
+        t2 = match.get("team2", "")
+        maps = []
+        for game in games:
+            winner_team = game.get("winner_team") or ""
+            winner_side = None
+            if _team_key(winner_team) == _team_key(t1):
+                winner_side = "team1"
+            elif _team_key(winner_team) == _team_key(t2):
+                winner_side = "team2"
+            summary = self._summarize_lolesports_completed_game(
+                game,
+                ctx.get("lolesports_teams") or [],
+                t1,
+                t2,
+                winner_team,
+            )
+            maps.append({
+                "number": summary.get("map_number"),
+                "winner": winner_side,
+                "kills": summary.get("kills") or {"team1": 0, "team2": 0},
+                "dragons": {"team1": 0, "team2": 0},
+            })
+
+        if len(games) == 1 and not maps[0].get("winner"):
+            if int(score.get("team1", 0)) > int(score.get("team2", 0)):
+                maps[0]["winner"] = "team1"
+            elif int(score.get("team2", 0)) > int(score.get("team1", 0)):
+                maps[0]["winner"] = "team2"
+
+        last = maps[-1] if maps else {}
+        momentum_t1 = 0.5 + (int(score.get("team1", 0)) - int(score.get("team2", 0))) * 0.16
+        momentum_t1 = float(np.clip(momentum_t1, 0.18, 0.82))
+
+        return {
+            "status": "ok",
+            "source": "LoLEsports",
+            "maps_played": len(maps),
+            "series_score": score,
+            "event_rates": {"first_blood": {"team1": 0.5, "team2": 0.5}, "first_dragon": {"team1": 0.5, "team2": 0.5}},
+            "totals": {
+                "kills": last.get("kills") or {"team1": 0, "team2": 0},
+                "dragons": {"team1": 0, "team2": 0},
+            },
+            "momentum": {"team1": momentum_t1, "team2": 1 - momentum_t1},
+            "last_map": last,
+            "maps": maps,
+        }
 
     def _fetch_pandascore_series_memory(self, match: dict) -> dict:
         if not PANDA_TOKEN:
@@ -1078,6 +1482,7 @@ class DataFetcher:
                 if streams:
                     item["stream_provider"] = streams[0].get("provider", "")
                     item["stream_parameter"] = streams[0].get("parameter", "")
+                self._attach_lolesports_series_fields(item, event)
                 parsed.append(item)
             return parsed
         except Exception:
@@ -1174,6 +1579,7 @@ class DataFetcher:
                     if streams:
                         item["stream_provider"] = streams[0].get("provider", "")
                         item["stream_parameter"] = streams[0].get("parameter", "")
+                    self._attach_lolesports_series_fields(item, event)
                     parsed.append(item)
             except Exception:
                 continue
