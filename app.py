@@ -746,6 +746,10 @@ def _render_sidebar_league_hamburger(leagues: list[tuple[str, str]], counts: dic
 @st.fragment(run_every=AUTO_REFRESH_SECONDS)
 def _run_auto_refresh_cycle() -> None:
     """Reexecuta o app a cada 60s para atualizar agenda/cards sem ação manual."""
+    # Nunca interromper a sala de operação com vídeo ativo.
+    if st.session_state.get("selected_match"):
+        return
+
     now_ts = int(time.time())
     last_cycle = int(st.session_state.get("auto_refresh_last_cycle_ts", 0) or 0)
     if last_cycle == 0:
