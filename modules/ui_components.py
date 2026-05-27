@@ -518,6 +518,69 @@ def render_match_list(matches: list, analysis_map: dict,
     return None
 
 # ─── Sala de Operação ─────────────────────────────────────────────────
+def _compute_series_score(match: dict, analysis: dict) -> tuple[int | None, int | None]:
+    """
+    Retorna (score_time1, score_time2) quando disponível.
+
+    Prioridade:
+    1) `analysis["series_memory"]["series_score"]` (PandaScore, Bo3/Bo5)
+    2) `match["games"]` (quando o upstream já embute histórico por mapa)
+    """
+    t1 = match.get("team1", "")
+    t2 = match.get("team2", "")
+
+    memory = analysis.get("series_memory") or {}
+    if memory.get("status") == "ok":
+        s = memory.get("series_score") or {}
+        try:
+            a = s.get("team1")
+            b = s.get("team2")
+            if a is not None and b is not None:
+                return int(a), int(b)
+        except Exception:
+            pass
+
+    games = match.get("games")
+    if isinstance(games, list) and t1 and t2:
+        score1 = 0
+        score2 = 0
+        for g in games:
+            winner = g.get("winner") or g.get("winning_team") or g.get("won") or ""
+            w = str(winner).strip()
+            wl = w.lower()
+            if not w:
+                continue
+            if wl in {"team1", "t1", "blue", "blue_team", t1.lower()}:
+                score1 += 1
+            elif wl in {"team2", "t2", "red", "red_team", t2.lower()}:
+                score2 += 1
+        if score1 or score2:
+            return score1, score2
+
+    return None, None
+
+
+def _render_series_score_top(match: dict, analysis: dict) -> None:
+    t1 = match.get("team1", "Time 1")
+    t2 = match.get("team2", "Time 2")
+    s1, s2 = _compute_series_score(match, analysis)
+
+    if s1 is None or s2 is None:
+        label = "PLACAR DA SÉRIE: —"
+    else:
+        label = f"PLACAR DA SÉRIE: {t1} {s1} x {s2} {t2}"
+
+    st.markdown(
+        f'<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:10px;'
+        f'padding:10px 12px;margin:10px 0;">'
+        f'<div style="font-size:12px;color:#6F7888;font-weight:800;margin-bottom:6px;">'
+        f'🧾 Série (atualizado ao vivo)</div>'
+        f'<div style="font-size:16px;font-weight:900;color:#F5F7FA;">{label}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                            roster_t1, roster_t2, bankroll, target,
                            twitch_channel="", live_stats=None, on_bet_click=None):
@@ -548,6 +611,8 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
             f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{t2}</span>'
             f'<span style="font-size:11px;color:#3A4D65;margin-left:12px;">'
             f'{lg} · Bo{bo}</span></div>', unsafe_allow_html=True)
+
+    _render_series_score_top(match, analysis)
 
     st.markdown('<hr style="margin:8px 0 12px;">', unsafe_allow_html=True)
 
@@ -994,9 +1059,24 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             '<span style="font-size:10px;font-weight:700;color:#1565C0;'
             'letter-spacing:1px;">💹 CALCULADORA DE STAKE</span></div>',
             unsafe_allow_html=True)
-        sel  = st.selectbox("", [p["market"] for p in preds],
-                             key="oc_sel", label_visibility="collapsed")
-        pred = next((p for p in preds if p["market"]==sel), preds[0])
+        preds_sorted = sorted(preds, key=lambda p: p.get("confidence", 0), reverse=True)
+        sel = st.selectbox(
+            "",
+            [p.get("market", "Mercado") for p in preds_sorted],
+            key="oc_sel",
+            label_visibility="collapsed",
+        )
+        pred = next((p for p in preds_sorted if p.get("market") == sel), preds_sorted[0])
+        sug = pred.get("suggestion") or ""
+        if sug:
+            st.markdown(
+                f'<div style="background:#131926;border:1px solid #1A2D4A;border-radius:8px;'
+                f'padding:8px 10px;margin:6px 0 8px;">'
+                f'<div style="font-size:12px;color:#C8D4E8;font-weight:800;margin-bottom:4px;">Sugestão (IA)</div>'
+                f'<div style="font-size:14px;color:#F5F7FA;font-weight:900;">{escape(sug)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         fp   = pred["probability"]; fo = pred.get("fair_odds", round(1/fp, 2))
         ho   = st.number_input("Odd da casa:", min_value=1.01, value=fo,
                                 step=0.05, key="oc_inp", label_visibility="collapsed")

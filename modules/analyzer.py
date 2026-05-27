@@ -6,23 +6,289 @@ e gera o pacote completo de contexto (forma + comentário do analista).
 
 import numpy as np
 from scipy import stats
+from datetime import datetime, timezone
+import re
 from modules.data_fetcher import DataFetcher, generate_analyst_comment
 
 
 class MatchAnalyzer:
     def __init__(self):
         self.fetcher = DataFetcher()
+        # Cache curto para evitar chamadas repetidas do LoLEsports em sequência.
+        self._live_stats_cache: dict[str, tuple[datetime, dict]] = {}
+
+    @staticmethod
+    def _norm_team(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (name or "").lower()).strip()
+
+    def _get_live_stats_cached(self, game_id: str | None) -> dict:
+        if not game_id:
+            return {}
+        now = datetime.now(timezone.utc)
+        cached = self._live_stats_cache.get(str(game_id))
+        if cached:
+            cached_at, data = cached
+            if (now - cached_at).total_seconds() < 12:
+                return dict(data)
+        data = self.fetcher.fetch_lolesports_live_stats(game_id)
+        self._live_stats_cache[str(game_id)] = (now, dict(data or {}))
+        return data or {}
+
+    def _parse_timestamp_to_elapsed_minutes(self, live_stats: dict) -> float | None:
+        ts = live_stats.get("timestamp")
+        if ts is None:
+            return None
+
+        try:
+            if isinstance(ts, (int, float)) or (isinstance(ts, str) and ts.strip().isdigit()):
+                v = float(ts)
+                # Se for milissegundos, normaliza para segundos.
+                if v > 1e12:
+                    v /= 1000.0
+                dt = datetime.fromtimestamp(v, tz=timezone.utc)
+                return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+
+            if isinstance(ts, str):
+                s = ts.strip().replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
+        except Exception:
+            return None
+        return None
+
+    def _compute_live_macro(self, match: dict, t1_name: str, t2_name: str, live_stats: dict) -> dict | None:
+        if not live_stats or live_stats.get("status") != "ok":
+            return None
+
+        blue = live_stats.get("blue") or {}
+        red = live_stats.get("red") or {}
+
+        blue_team = match.get("blue_team") or ""
+        red_team = match.get("red_team") or ""
+
+        t1_is_blue = self._norm_team(blue_team) == self._norm_team(t1_name)
+        t1_is_red = self._norm_team(red_team) == self._norm_team(t1_name)
+        if not (t1_is_blue or t1_is_red):
+            return None
+
+        blue_gold = float(blue.get("total_gold") or 0)
+        red_gold = float(red.get("total_gold") or 0)
+        blue_towers = int(blue.get("towers") or 0)
+        red_towers = int(red.get("towers") or 0)
+        blue_dragons = len(blue.get("dragons") or [])
+        red_dragons = len(red.get("dragons") or [])
+
+        elapsed_min = self._parse_timestamp_to_elapsed_minutes(live_stats)
+
+        # gold_diff positivo = vantagem do t1.
+        if t1_is_blue:
+            gold_diff = blue_gold - red_gold
+        else:
+            # t1 é red
+            gold_diff = red_gold - blue_gold
+
+        ahead_team = t1_name if gold_diff >= 0 else t2_name
+        behind_team = t2_name if ahead_team == t1_name else t1_name
+
+        if ahead_team == t1_name:
+            towers_ahead = blue_towers if t1_is_blue else red_towers
+            towers_behind = red_towers if t1_is_blue else blue_towers
+            dragons_ahead = blue_dragons if t1_is_blue else red_dragons
+            dragons_behind = red_dragons if t1_is_blue else blue_dragons
+        else:
+            towers_ahead = red_towers if t1_is_blue else blue_towers
+            towers_behind = blue_towers if t1_is_blue else red_towers
+            dragons_ahead = red_dragons if t1_is_blue else blue_dragons
+            dragons_behind = blue_dragons if t1_is_blue else red_dragons
+
+        return {
+            "elapsed_minutes": elapsed_min,
+            "gold_diff": int(gold_diff),
+            "ahead_team": ahead_team,
+            "behind_team": behind_team,
+            "ahead_gold": abs(int(gold_diff)),
+            "towers_ahead": towers_ahead,
+            "towers_behind": towers_behind,
+            "dragons_ahead": dragons_ahead,
+            "dragons_behind": dragons_behind,
+        }
+
+    def _adjust_predictions_live_macro(
+        self,
+        match: dict,
+        t1_name: str,
+        t2_name: str,
+        predictions: list[dict],
+        live_macro: dict,
+    ) -> tuple[list[dict], str | None]:
+        if not live_macro:
+            return predictions, None
+
+        gold_diff = live_macro["gold_diff"]
+        ahead_team = live_macro["ahead_team"]
+        behind_team = live_macro["behind_team"]
+        elapsed_min = live_macro.get("elapsed_minutes")
+
+        abs_gold = abs(gold_diff)
+        heat_gold = 0.0
+        if abs_gold >= 2000:
+            heat_gold = min(1.0, max(0.0, (abs_gold - 2000) / 5000.0))
+
+        towers_span = max(0, int(live_macro.get("towers_ahead", 0)) - int(live_macro.get("towers_behind", 0)))
+        heat_towers = min(1.0, towers_span / 4.0) if towers_span > 0 else 0.0
+        dragons_span = max(0, int(live_macro.get("dragons_ahead", 0)) - int(live_macro.get("dragons_behind", 0)))
+        heat_dragons = min(1.0, dragons_span / 2.0) if dragons_span > 0 else 0.0
+        heat = min(1.0, 0.60 * heat_gold + 0.25 * heat_towers + 0.15 * heat_dragons)
+
+        # Ouro > 2k antes de 15 min (requisito do usuário).
+        trigger = abs_gold >= 2000 and (elapsed_min is not None and elapsed_min <= 15.0)
+        delta = 0.03 + 0.12 * heat  # variação tipo "uma casa"
+
+        def parse_favored_from_ml(pred: dict) -> str | None:
+            s = str(pred.get("suggestion") or "")
+            if "Vence" not in s:
+                return None
+            return s.split("Vence", 1)[0].replace("🏆", "").strip()
+
+        def parse_favored_from_first_event(pred: dict) -> str | None:
+            s = str(pred.get("suggestion") or "")
+            if "→" in s:
+                return s.split("→", 1)[1].strip()
+            if "->" in s:
+                return s.split("->", 1)[1].strip()
+            return None
+
+        ml_pred = next((p for p in predictions if p.get("market") == "Vitória (Moneyline)"), None)
+        baron_pred = next((p for p in predictions if p.get("market") == "First Baron"), None)
+        fd_pred = next((p for p in predictions if p.get("market") == "First Dragon"), None)
+
+        # Ajuste do ML
+        if ml_pred:
+            favored = parse_favored_from_ml(ml_pred) or ""
+            prob_favored = float(ml_pred.get("probability") or 0.5)
+
+            prob_ahead = prob_favored
+            if self._norm_team(favored) != self._norm_team(ahead_team):
+                prob_ahead = 1.0 - prob_favored
+
+            if trigger:
+                prob_ahead = float(np.clip(prob_ahead + delta, 0.05, 0.95))
+
+            new_favored = ahead_team if prob_ahead >= 0.5 else behind_team
+            new_prob_favored = prob_ahead if new_favored == ahead_team else 1.0 - prob_ahead
+
+            ml_pred["probability"] = round(new_prob_favored, 3)
+            ml_pred["confidence"] = round(new_prob_favored * 100, 1)
+            ml_pred["fair_odds"] = round(1 / max(new_prob_favored, 0.01), 2)
+
+            k_gold = abs_gold / 1000.0
+            lead_txt = f"(macro +{k_gold:.1f}k ouro)"
+            ml_pred["suggestion"] = f"🏆 {new_favored} Vence {lead_txt}"
+            if elapsed_min is not None:
+                ml_pred["reason"] = (
+                    f"Live: {ahead_team} com +{k_gold:.1f}k de ouro (Δ {gold_diff:+d}g) aos {elapsed_min:.0f} min. "
+                    f"Ajuste {'aplicado' if trigger else 'parcial'} no ML."
+                )
+
+        # Ajuste do First Baron
+        if baron_pred:
+            side_probs = baron_pred.get("side_probabilities") or {}
+            prob_ahead = None
+            if ahead_team in side_probs:
+                prob_ahead = float(side_probs[ahead_team])
+            else:
+                favored = parse_favored_from_first_event(baron_pred) or ""
+                prob_favored = float(baron_pred.get("probability") or 0.5)
+                prob_ahead = prob_favored if self._norm_team(favored) == self._norm_team(ahead_team) else 1.0 - prob_favored
+
+            if trigger and prob_ahead is not None:
+                prob_ahead = float(np.clip(prob_ahead + 0.90 * delta, 0.05, 0.95))
+
+            prob_ahead = float(prob_ahead if prob_ahead is not None else 0.5)
+            new_favored = ahead_team if prob_ahead >= 0.5 else behind_team
+            new_prob_favored = prob_ahead if new_favored == ahead_team else 1.0 - prob_ahead
+
+            if new_favored == t1_name:
+                prob_t1 = new_prob_favored
+            else:
+                prob_t1 = 1.0 - new_prob_favored
+            baron_pred["side_probabilities"] = {
+                t1_name: round(prob_t1, 3),
+                t2_name: round(1.0 - prob_t1, 3),
+            }
+            baron_pred["probability"] = round(new_prob_favored, 3)
+            baron_pred["confidence"] = round(new_prob_favored * 100, 1)
+            baron_pred["fair_odds"] = round(1 / max(new_prob_favored, 0.01), 2)
+
+            k_gold = abs_gold / 1000.0
+            lead_txt = f"(macro +{k_gold:.1f}k ouro)"
+            baron_pred["suggestion"] = f"👑 First Baron → {new_favored} {lead_txt}"
+            if elapsed_min is not None:
+                baron_pred["reason"] = (
+                    f"Live: vantagem de macro para {ahead_team} aos {elapsed_min:.0f} min "
+                    f"(Δ {gold_diff:+d}g) com torres {live_macro['towers_ahead']}–{live_macro['towers_behind']}. "
+                    f"Ajuste {'aplicado' if trigger else 'parcial'} no First Baron."
+                )
+
+        # Insights: compõe um comentário dinâmico com números reais.
+        k_gold = abs_gold / 1000.0
+        elapsed_txt = f"{elapsed_min:.0f} min" if elapsed_min is not None else "—"
+
+        # ML prob ahead (se existir)
+        ml_prob_ahead = None
+        if ml_pred:
+            favored = parse_favored_from_ml(ml_pred) or ""
+            ml_prob_favored = float(ml_pred.get("probability") or 0.5)
+            ml_prob_ahead = ml_prob_favored if self._norm_team(favored) == self._norm_team(ahead_team) else 1.0 - ml_prob_favored
+
+        baron_prob_ahead = None
+        if baron_pred:
+            side_probs = baron_pred.get("side_probabilities") or {}
+            if ahead_team in side_probs:
+                baron_prob_ahead = float(side_probs[ahead_team])
+
+        fd_prob_ahead = None
+        if fd_pred:
+            side_probs = fd_pred.get("side_probabilities") or {}
+            if ahead_team in side_probs:
+                fd_prob_ahead = float(side_probs[ahead_team])
+
+        ml_txt = f"{(ml_prob_ahead or 0.0) * 100:.0f}%" if ml_prob_ahead is not None else "—"
+        baron_txt = f"{(baron_prob_ahead or 0.0) * 100:.0f}%" if baron_prob_ahead is not None else "—"
+        extra_fd = ""
+        if fd_prob_ahead is not None:
+            extra_fd = f" · Prob. de First Dragon para {ahead_team}: {fd_prob_ahead * 100:.0f}%"
+
+        comment = (
+            f"IA detectou vantagem de macro: {ahead_team} com +{k_gold:.1f}k de ouro aos {elapsed_txt}. "
+            f"Torres {live_macro['towers_ahead']}–{live_macro['towers_behind']} e Dragões {live_macro['dragons_ahead']}–{live_macro['dragons_behind']}. "
+            f"{'Recalculando' if trigger else 'Monitorando'}: ML para {ahead_team} em {ml_txt} "
+            f"e First Baron em {baron_txt}.{extra_fd}"
+        )
+
+        return predictions, comment
 
     def analyze_match(self, match: dict, active_markets: dict, min_confidence: float = 75.0) -> dict:
         # Usa stats reais injetados pelo Confronto Direto se disponíveis
         lc = match.get("league_code", "_unknown")
+        t1_name = match.get("team1", "")
+        t2_name = match.get("team2", "")
+
+        live_macro = None
+        if match.get("state") == "inProgress":
+            live_stats = self._get_live_stats_cached(match.get("lolesports_game_id"))
+            if live_stats.get("status") == "ok":
+                live_macro = self._compute_live_macro(match, t1_name, t2_name, live_stats)
+
         t1_stats = (
             match.get("_stats_t1_override")
-            or self.fetcher.get_team_stats(match["team1"], lc)
+            or self.fetcher.get_team_stats(t1_name, lc)
         )
         t2_stats = (
             match.get("_stats_t2_override")
-            or self.fetcher.get_team_stats(match["team2"], lc)
+            or self.fetcher.get_team_stats(t2_name, lc)
         )
 
         t1_form = t1_stats.get("form", {})
@@ -35,6 +301,46 @@ class MatchAnalyzer:
         )
         t1_stats, t2_stats, regional_meta = self._apply_regional_meta(lc, t1_stats, t2_stats)
 
+        # Ajuste ao vivo: quando há vantagem clara de macro cedo no jogo,
+        # atualiza também os inputs (winrate/first_baron_rate) para que
+        # `generate_decision_card()` mostre odds/sugestão mais dinâmicas.
+        if live_macro and match.get("state") == "inProgress":
+            abs_gold = int(live_macro.get("ahead_gold") or 0)
+            elapsed_min = live_macro.get("elapsed_minutes")
+            trigger = abs_gold >= 2000 and (elapsed_min is not None and elapsed_min <= 15.0)
+
+            if trigger:
+                heat_gold = min(1.0, max(0.0, (abs_gold - 2000) / 5000.0))
+                towers_span = max(0, int(live_macro.get("towers_ahead", 0)) - int(live_macro.get("towers_behind", 0)))
+                heat_towers = min(1.0, towers_span / 4.0) if towers_span > 0 else 0.0
+                dragons_span = max(0, int(live_macro.get("dragons_ahead", 0)) - int(live_macro.get("dragons_behind", 0)))
+                heat_dragons = min(1.0, dragons_span / 2.0) if dragons_span > 0 else 0.0
+                heat = min(1.0, 0.60 * heat_gold + 0.25 * heat_towers + 0.15 * heat_dragons)
+
+                delta_wr = 0.04 + 0.10 * heat
+                delta_baron = 0.02 + 0.06 * heat
+                delta_dragon = 0.01 + 0.04 * heat_dragons
+
+                ahead_team = live_macro.get("ahead_team")
+                if ahead_team == match.get("team1"):
+                    t1_stats["winrate"] = float(np.clip(t1_stats.get("winrate", 0.5) + delta_wr, 0.20, 0.93))
+                    t2_stats["winrate"] = float(np.clip(t2_stats.get("winrate", 0.5) - delta_wr * 0.85, 0.08, 0.88))
+
+                    t1_stats["first_baron_rate"] = float(np.clip(t1_stats.get("first_baron_rate", 0.5) + delta_baron, 0.20, 0.88))
+                    t2_stats["first_baron_rate"] = float(np.clip(t2_stats.get("first_baron_rate", 0.5) - delta_baron * 0.85, 0.20, 0.88))
+
+                    t1_stats["first_dragon_rate"] = float(np.clip(t1_stats.get("first_dragon_rate", 0.5) + delta_dragon, 0.20, 0.88))
+                    t2_stats["first_dragon_rate"] = float(np.clip(t2_stats.get("first_dragon_rate", 0.5) - delta_dragon * 0.85, 0.20, 0.88))
+                else:
+                    t2_stats["winrate"] = float(np.clip(t2_stats.get("winrate", 0.5) + delta_wr, 0.20, 0.93))
+                    t1_stats["winrate"] = float(np.clip(t1_stats.get("winrate", 0.5) - delta_wr * 0.85, 0.08, 0.88))
+
+                    t2_stats["first_baron_rate"] = float(np.clip(t2_stats.get("first_baron_rate", 0.5) + delta_baron, 0.20, 0.88))
+                    t1_stats["first_baron_rate"] = float(np.clip(t1_stats.get("first_baron_rate", 0.5) - delta_baron * 0.85, 0.20, 0.88))
+
+                    t2_stats["first_dragon_rate"] = float(np.clip(t2_stats.get("first_dragon_rate", 0.5) + delta_dragon, 0.20, 0.88))
+                    t1_stats["first_dragon_rate"] = float(np.clip(t1_stats.get("first_dragon_rate", 0.5) - delta_dragon * 0.85, 0.20, 0.88))
+
         predictions = []
         alerts = []
 
@@ -44,28 +350,28 @@ class MatchAnalyzer:
                 alerts.append(form["alert"])
 
         if active_markets.get("Vitória (ML)"):
-            pred = self._predict_winner(match["team1"], t1_stats, match["team2"], t2_stats)
+            pred = self._predict_winner(t1_name, t1_stats, t2_name, t2_stats)
             if pred["confidence"] >= min_confidence:
                 predictions.append(pred)
 
         if active_markets.get("First Blood"):
             pred = self._predict_first_event("First Blood",
-                match["team1"], t1_stats["first_blood_rate"],
-                match["team2"], t2_stats["first_blood_rate"], series_memory, "first_blood")
+                t1_name, t1_stats["first_blood_rate"],
+                t2_name, t2_stats["first_blood_rate"], series_memory, "first_blood")
             if pred["confidence"] >= max(52, min_confidence - 15):
                 predictions.append(pred)
 
         if active_markets.get("First Dragon"):
             pred = self._predict_first_event("First Dragon",
-                match["team1"], t1_stats["first_dragon_rate"],
-                match["team2"], t2_stats["first_dragon_rate"], series_memory, "first_dragon")
+                t1_name, t1_stats["first_dragon_rate"],
+                t2_name, t2_stats["first_dragon_rate"], series_memory, "first_dragon")
             if pred["confidence"] >= max(52, min_confidence - 15):
                 predictions.append(pred)
 
         if active_markets.get("First Baron"):
             pred = self._predict_first_event("First Baron",
-                match["team1"], t1_stats["first_baron_rate"],
-                match["team2"], t2_stats["first_baron_rate"])
+                t1_name, t1_stats["first_baron_rate"],
+                t2_name, t2_stats["first_baron_rate"])
             if pred["confidence"] >= min_confidence:
                 predictions.append(pred)
 
@@ -80,16 +386,24 @@ class MatchAnalyzer:
                 predictions.append(pred)
 
         if active_markets.get("Gold Diff @15min"):
-            pred = self._predict_gold_diff(match["team1"], t1_stats, match["team2"], t2_stats)
+            pred = self._predict_gold_diff(t1_name, t1_stats, t2_name, t2_stats)
             if pred["confidence"] >= min_confidence:
                 predictions.append(pred)
 
         # Gera comentário do analista
-        analyst_comment = generate_analyst_comment(
-            match["team1"], t1_stats, t1_form,
-            match["team2"], t2_stats, t2_form,
-            league_code=match.get("league_code", ""),
-        )
+        analyst_comment = None
+        if match.get("state") == "inProgress" and live_macro:
+            predictions, live_comment = self._adjust_predictions_live_macro(
+                match, t1_name, t2_name, predictions, live_macro
+            )
+            analyst_comment = live_comment
+
+        if analyst_comment is None:
+            analyst_comment = generate_analyst_comment(
+                t1_name, t1_stats, t1_form,
+                t2_name, t2_stats, t2_form,
+                league_code=match.get("league_code", ""),
+            )
 
         warnings = []
         if t1_stats.get("source", "").startswith("Demo"):
