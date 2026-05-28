@@ -1259,13 +1259,14 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                 '✅ APOSTAS SEGURAS</div>', unsafe_allow_html=True)
             for d in safe[:3]:
                 cc2 = "#22C55E" if d["confidence"]>=80 else "#F59E0B"
+                subline = d.get("entry") or d.get("suggestion") or d.get("market", "")
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
                     f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:20]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
         with c2:
@@ -1275,13 +1276,14 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                 '⚡ APOSTAS DE RISCO</div>', unsafe_allow_html=True)
             for d in risky[:3]:
                 cc2 = "#F59E0B" if d["confidence"]>=65 else "#EF4444"
+                subline = d.get("entry") or d.get("suggestion") or d.get("market", "")
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
                     f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{d["market"][:20]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
 
@@ -1442,9 +1444,16 @@ def _fmt_order(top: dict) -> str:
         return f"🩸 FIRST BLOOD"
     if "PRIMEIRO DRAGÃO" in m or "FIRST DRAGON" in m:
         return f"🐉 PRIMEIRO DRAGÃO"
-    if "DURAÇÃO" in m and "27" in m: return "⏱ DURAÇÃO >27MIN"
-    if "DURAÇÃO" in m and "30" in m: return "⏳ DURAÇÃO >30MIN"
-    if "DURAÇÃO" in m: return "⏱ DURAÇÃO DO MAPA"
+    if "DURAÇÃO" in m:
+        import re
+        line_match = re.search(r"(\d+(?:[.,]\d+)?)", str(e) or str(m))
+        line = line_match.group(1).replace(",", ".") if line_match else ""
+        el = str(e).lower()
+        if "mais" in el or "over" in el:
+            return f"⏱ DURAÇÃO >{line}MIN" if line else "⏱ DURAÇÃO OVER"
+        if "menos" in el or "under" in el:
+            return f"⏱ DURAÇÃO <{line}MIN" if line else "⏱ DURAÇÃO UNDER"
+        return f"⏱ DURAÇÃO {line}MIN" if line else "⏱ DURAÇÃO DO MAPA"
     if "TORRES" in m:
         line = m.split("OVER")[-1].strip()[:6] if "OVER" in m else ""
         return f"🏰 OVER {line} TORRES"
