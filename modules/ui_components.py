@@ -1191,7 +1191,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
     top   = dc.get("top_pick")
     safe  = dc.get("safe_picks", [])
     risky = dc.get("risky_picks", [])
-    preds = analysis.get("predictions", [])
+    preds = dc.get("decisions", []) or analysis.get("predictions", [])
 
     st.markdown(
         '<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:7px;'
@@ -1301,7 +1301,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             label_visibility="collapsed",
         )
         pred = next((p for p in preds_sorted if p.get("market") == sel), preds_sorted[0])
-        sug = pred.get("suggestion") or ""
+        sug = pred.get("suggestion") or pred.get("entry") or ""
         if sug:
             st.markdown(
                 f'<div style="background:#131926;border:1px solid #1A2D4A;border-radius:8px;'

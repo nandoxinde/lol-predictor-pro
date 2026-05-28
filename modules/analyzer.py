@@ -21,18 +21,142 @@ class MatchAnalyzer:
     def _norm_team(name: str) -> str:
         return re.sub(r"[^a-z0-9]+", "", (name or "").lower()).strip()
 
-    def _get_live_stats_cached(self, game_id: str | None) -> dict:
+    def _get_live_stats_cached(self, game_id: str | None, force_refresh: bool = False) -> dict:
         if not game_id:
             return {}
         now = datetime.now(timezone.utc)
         cached = self._live_stats_cache.get(str(game_id))
-        if cached:
+        if cached and not force_refresh:
             cached_at, data = cached
             if (now - cached_at).total_seconds() < 12:
                 return dict(data)
         data = self.fetcher.fetch_lolesports_live_stats(game_id)
         self._live_stats_cache[str(game_id)] = (now, dict(data or {}))
         return data or {}
+
+    @staticmethod
+    def _extract_line_value(*texts: str, default: float = 27.5) -> float:
+        for text in texts:
+            if not text:
+                continue
+            match = re.search(r"(\d+(?:[.,]\d+)?)", str(text))
+            if match:
+                try:
+                    return float(match.group(1).replace(",", "."))
+                except Exception:
+                    continue
+        return default
+
+    def _extract_live_snapshot(self, match: dict, t1_name: str, t2_name: str, live_stats: dict) -> dict | None:
+        if not live_stats or live_stats.get("status") != "ok":
+            return None
+        blue = live_stats.get("blue") or {}
+        red = live_stats.get("red") or {}
+        blue_team = match.get("blue_team") or ""
+        red_team = match.get("red_team") or ""
+        t1_is_blue = self._norm_team(blue_team) == self._norm_team(t1_name)
+        t1_is_red = self._norm_team(red_team) == self._norm_team(t1_name)
+        if not (t1_is_blue or t1_is_red):
+            return None
+
+        t1_gold = float(blue.get("total_gold") or 0) if t1_is_blue else float(red.get("total_gold") or 0)
+        t2_gold = float(red.get("total_gold") or 0) if t1_is_blue else float(blue.get("total_gold") or 0)
+        t1_kills = int(blue.get("kills") or 0) if t1_is_blue else int(red.get("kills") or 0)
+        t2_kills = int(red.get("kills") or 0) if t1_is_blue else int(blue.get("kills") or 0)
+        gold_diff = int(t1_gold - t2_gold)
+        kill_diff = int(t1_kills - t2_kills)
+        total_kills = max(0, t1_kills + t2_kills)
+        total_gold = max(1.0, t1_gold + t2_gold)
+        # Estimativa robusta de tempo de jogo com base no total de ouro atual do mapa.
+        est_minutes = float(np.clip(total_gold / 4200.0, 4.0, 45.0))
+        leader = t1_name if (gold_diff * 0.65 + kill_diff * 550) >= 0 else t2_name
+        return {
+            "t1_kills": t1_kills,
+            "t2_kills": t2_kills,
+            "t1_gold": t1_gold,
+            "t2_gold": t2_gold,
+            "gold_diff": gold_diff,
+            "kill_diff": kill_diff,
+            "total_kills": total_kills,
+            "est_minutes": est_minutes,
+            "leader": leader,
+        }
+
+    def _reprice_live_predictions(self, predictions: list[dict], snapshot: dict, t1_name: str, t2_name: str) -> list[dict]:
+        if not predictions or not snapshot:
+            return predictions
+        est_minutes = float(snapshot.get("est_minutes", 12.0))
+        gold_diff = int(snapshot.get("gold_diff", 0))
+        kill_diff = int(snapshot.get("kill_diff", 0))
+        total_kills_now = int(snapshot.get("total_kills", 0))
+        leader = snapshot.get("leader") or t1_name
+        trailer = t2_name if self._norm_team(leader) == self._norm_team(t1_name) else t1_name
+        pace = total_kills_now / max(est_minutes, 1.0)
+        phase_boost = 0.85 if est_minutes < 14 else (1.0 if est_minutes < 25 else 1.12)
+        pressure = min(1.0, (abs(gold_diff) / 5000.0) * 0.65 + (abs(kill_diff) / 8.0) * 0.35)
+        prob_leader = float(np.clip(0.52 + (0.10 + 0.20 * pressure) * phase_boost, 0.52, 0.88))
+
+        repriced: list[dict] = []
+        for pred in predictions:
+            item = dict(pred)
+            market = str(item.get("market", "")).lower()
+            suggestion = str(item.get("suggestion", ""))
+
+            if any(token in market for token in ("moneyline", "vitória", "vencedor")):
+                fav = leader
+                prob = prob_leader
+                item["suggestion"] = f"🏆 {fav} Vence (live)"
+                item["probability"] = round(prob, 3)
+                item["confidence"] = round(prob * 100, 1)
+                item["fair_odds"] = round(1 / max(prob, 0.01), 2)
+                item["reason"] = (
+                    f"Live repricing: {fav} lidera em ouro ({gold_diff:+d}) e kills ({kill_diff:+d}) "
+                    f"com ~{est_minutes:.0f} min de mapa."
+                )
+
+            elif "total" in market and "abate" in market:
+                line = self._extract_line_value(item.get("market"), suggestion, default=27.5)
+                projected_final = total_kills_now + max(3.5, pace * max(0.0, 33.5 - est_minutes) * 0.78)
+                p_over = float(np.clip(0.50 + (projected_final - line) / 9.0, 0.12, 0.88))
+                p_under = 1.0 - p_over
+                over = p_over >= p_under
+                prob = p_over if over else p_under
+                item["suggestion"] = f"🎯 {'Mais' if over else 'Menos'} de {line:.1f} abates"
+                item["probability"] = round(prob, 3)
+                item["confidence"] = round(prob * 100, 1)
+                item["fair_odds"] = round(1 / max(prob, 0.01), 2)
+                item["reason"] = (
+                    f"Live repricing: kills atuais {total_kills_now}, ritmo {pace:.2f}/min, "
+                    f"projeção final {projected_final:.1f}."
+                )
+
+            elif "duração" in market:
+                line = self._extract_line_value(item.get("market"), suggestion, default=31.5)
+                projected_duration = float(np.clip(27.5 + pace * 2.8 + (abs(gold_diff) / 6000.0) * 2.0, 24.0, 42.0))
+                p_over = float(np.clip(0.50 + (projected_duration - line) / 6.5, 0.12, 0.88))
+                p_under = 1.0 - p_over
+                over = p_over >= p_under
+                prob = p_over if over else p_under
+                item["suggestion"] = f"⏱️ {'Mais' if over else 'Menos'} de {line:.1f} min"
+                item["probability"] = round(prob, 3)
+                item["confidence"] = round(prob * 100, 1)
+                item["fair_odds"] = round(1 / max(prob, 0.01), 2)
+                item["reason"] = (
+                    f"Live repricing: tempo estimado ~{est_minutes:.0f} min, "
+                    f"duração projetada {projected_duration:.1f}."
+                )
+
+            elif "gold diff" in market or "gd@15" in market:
+                fav = leader if abs(gold_diff) >= 400 else trailer
+                prob = float(np.clip(0.53 + min(0.27, abs(gold_diff) / 8000.0), 0.53, 0.86))
+                item["suggestion"] = f"💰 {fav} lidera ouro"
+                item["probability"] = round(prob, 3)
+                item["confidence"] = round(prob * 100, 1)
+                item["fair_odds"] = round(1 / max(prob, 0.01), 2)
+                item["reason"] = f"Live repricing: diferença de ouro atual {gold_diff:+d}."
+
+            repriced.append(item)
+        return repriced
 
     def _parse_timestamp_to_elapsed_minutes(self, live_stats: dict) -> float | None:
         ts = live_stats.get("timestamp")
@@ -277,8 +401,10 @@ class MatchAnalyzer:
         t2_name = match.get("team2", "")
 
         live_macro = None
+        live_stats = {}
         if match.get("state") == "inProgress":
-            live_stats = self._get_live_stats_cached(match.get("lolesports_game_id"))
+            # AO VIVO: força leitura atual da telemetria a cada ciclo.
+            live_stats = self._get_live_stats_cached(match.get("lolesports_game_id"), force_refresh=True)
             if live_stats.get("status") == "ok":
                 live_macro = self._compute_live_macro(match, t1_name, t2_name, live_stats)
 
@@ -404,6 +530,10 @@ class MatchAnalyzer:
                 t2_name, t2_stats, t2_form,
                 league_code=match.get("league_code", ""),
             )
+
+        if match.get("state") == "inProgress" and live_stats.get("status") == "ok":
+            live_snapshot = self._extract_live_snapshot(match, t1_name, t2_name, live_stats)
+            predictions = self._reprice_live_predictions(predictions, live_snapshot or {}, t1_name, t2_name)
 
         warnings = []
         if t1_stats.get("source", "").startswith("Demo"):
