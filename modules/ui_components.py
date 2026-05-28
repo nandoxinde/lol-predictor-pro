@@ -707,7 +707,7 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     dc = generate_decision_card(
         t1, analysis["team1_stats"], analysis.get("team1_form",{}),
         t2, analysis["team2_stats"], analysis.get("team2_form",{}),
-        lc, bankroll)
+        lc, bankroll, analysis=analysis, match=match)
 
     # Split: player (L) | mercados (R)
     col_v, col_m = st.columns([3,2])

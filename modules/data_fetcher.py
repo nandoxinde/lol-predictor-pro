@@ -283,82 +283,209 @@ TIER_PROFILE = {
 }
 
 
-def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll):
-    t1wr = t1s.get("winrate", 0.5)
-    t2wr = t2s.get("winrate", 0.5)
-    t1len = t1s.get("avg_game_length", 32)
-    t2len = t2s.get("avg_game_length", 32)
-    fav = t1n if t1wr >= t2wr else t2n
-    gap = abs(t1wr - t2wr)
-    avg_len = (t1len + t2len) / 2
-    decisions = []
+def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=None, match=None):
+    """Gera portfólio dinâmico de entradas por perfil dos times e contexto da série."""
+    del t1f, t2f, lc, bankroll, match  # compatibilidade de assinatura
 
-    if gap > 0.10:
-        prob = min(0.88, 0.60 + gap * 0.8)
-        decisions.append({
-            "market": f"Vencedor — {fav}",
-            "entry": f"{fav} vence",
+    def _clip(value: float, low: float = 0.05, high: float = 0.95) -> float:
+        return float(max(low, min(high, value)))
+
+    def _mk_entry(market: str, entry: str, probability: float, icon: str, category: str, reason: str = "") -> dict:
+        prob = _clip(float(probability))
+        return {
+            "market": market,
+            "entry": entry,
             "confidence": round(prob * 100, 1),
             "probability": prob,
             "fair_odds": round(1 / max(prob, 0.01), 2),
-            "icon": "🏆",
-            "category": "segura",
-        })
+            "icon": icon,
+            "category": category,
+            "reason": reason,
+        }
 
-    p27 = min(0.94, max(0.35, 0.55 + (avg_len - 27) * 0.045))
-    decisions.append({
-        "market": "Duração >27 minutos",
-        "entry": "Jogo passa de 27 minutos",
-        "confidence": round(p27 * 100, 1),
-        "probability": p27,
-        "fair_odds": round(1 / max(p27, 0.01), 2),
-        "icon": "⏱",
-        "category": "segura",
-    })
+    t1wr = float(t1s.get("winrate", 0.5) or 0.5)
+    t2wr = float(t2s.get("winrate", 0.5) or 0.5)
+    wr_gap = abs(t1wr - t2wr)
+    favored = t1n if t1wr >= t2wr else t2n
 
-    p30 = min(0.88, max(0.25, 0.50 + (avg_len - 30) * 0.04))
-    decisions.append({
-        "market": "Duração >30 minutos",
-        "entry": "Jogo passa de 30 minutos",
-        "confidence": round(p30 * 100, 1),
-        "probability": p30,
-        "fair_odds": round(1 / max(p30, 0.01), 2),
-        "icon": "⌛",
-        "category": "segura" if p30 >= 0.63 else "risco",
-    })
+    t1_fb = float(t1s.get("first_blood_rate", 0.5) or 0.5)
+    t2_fb = float(t2s.get("first_blood_rate", 0.5) or 0.5)
+    t1_fd = float(t1s.get("first_dragon_rate", 0.5) or 0.5)
+    t2_fd = float(t2s.get("first_dragon_rate", 0.5) or 0.5)
+    t1_baron = float(t1s.get("first_baron_rate", 0.5) or 0.5)
+    t2_baron = float(t2s.get("first_baron_rate", 0.5) or 0.5)
 
-    fb_team = t1n if t1s.get("first_blood_rate", .5) >= t2s.get("first_blood_rate", .5) else t2n
-    fb_prob = min(0.82, max(t1s.get("first_blood_rate", .5), t2s.get("first_blood_rate", .5)))
-    decisions.append({
-        "market": f"First Blood — {fb_team}",
-        "entry": f"{fb_team} primeiro abate",
-        "confidence": round(fb_prob * 100, 1),
-        "probability": fb_prob,
-        "fair_odds": round(1 / max(fb_prob, 0.01), 2),
-        "icon": "🩸",
-        "category": "risco",
-    })
+    t1_kills = float(t1s.get("avg_kills", 14.0) or 14.0)
+    t2_kills = float(t2s.get("avg_kills", 14.0) or 14.0)
+    t1_deaths = float(t1s.get("avg_deaths", 14.0) or 14.0)
+    t2_deaths = float(t2s.get("avg_deaths", 14.0) or 14.0)
+    exp_total_kills = max(16.0, (t1_kills + t2_kills + t1_deaths + t2_deaths) / 2.0)
 
-    fd_team = t1n if t1s.get("first_dragon_rate", .5) >= t2s.get("first_dragon_rate", .5) else t2n
-    fd_prob = min(0.84, max(t1s.get("first_dragon_rate", .5), t2s.get("first_dragon_rate", .5)))
-    decisions.append({
-        "market": f"First Dragon — {fd_team}",
-        "entry": f"{fd_team} primeiro dragão",
-        "confidence": round(fd_prob * 100, 1),
-        "probability": fd_prob,
-        "fair_odds": round(1 / max(fd_prob, 0.01), 2),
-        "icon": "🐉",
-        "category": "risco" if fd_prob < 0.70 else "segura",
-    })
+    t1_len = float(t1s.get("avg_game_length", 32.0) or 32.0)
+    t2_len = float(t2s.get("avg_game_length", 32.0) or 32.0)
+    avg_len = (t1_len + t2_len) / 2.0
+
+    t1_towers = float(t1s.get("avg_towers", 6.0) or 6.0)
+    t2_towers = float(t2s.get("avg_towers", 6.0) or 6.0)
+    exp_total_towers = max(6.0, t1_towers + t2_towers)
+
+    decisions: list[dict] = []
+    seen_entries: set[str] = set()
+
+    def _push(decision: dict | None) -> None:
+        if not decision:
+            return
+        key = f"{decision.get('market')}|{decision.get('entry')}"
+        if key in seen_entries:
+            return
+        seen_entries.add(key)
+        decisions.append(decision)
+
+    # 1) Base estrutural de match winner
+    if wr_gap >= 0.03:
+        prob_fav = _clip(0.52 + wr_gap * 0.95, 0.51, 0.90)
+        bucket = "segura" if prob_fav >= 0.67 else "risco"
+        _push(_mk_entry(
+            f"Vencedor — {favored}",
+            f"{favored} vence",
+            prob_fav,
+            "🏆",
+            bucket,
+            f"Gap de WR de {wr_gap * 100:.1f} p.p.",
+        ))
+
+    # 2) Objetivos iniciais e macro
+    fb_team = t1n if t1_fb >= t2_fb else t2n
+    fb_prob = max(t1_fb, t2_fb)
+    _push(_mk_entry(
+        f"Primeiro Abate — {fb_team}",
+        f"{fb_team} primeiro abate",
+        fb_prob,
+        "🩸",
+        "segura" if fb_prob >= 0.66 else "risco",
+        "Taxa histórica de first blood.",
+    ))
+
+    fd_team = t1n if t1_fd >= t2_fd else t2n
+    fd_prob = max(t1_fd, t2_fd)
+    _push(_mk_entry(
+        f"Primeiro Dragão — {fd_team}",
+        f"{fd_team} primeiro dragão",
+        fd_prob,
+        "🐉",
+        "segura" if fd_prob >= 0.67 else "risco",
+        "Controle de objetivo inicial.",
+    ))
+
+    baron_team = t1n if t1_baron >= t2_baron else t2n
+    baron_prob = max(t1_baron, t2_baron)
+    _push(_mk_entry(
+        f"Primeiro Barão — {baron_team}",
+        f"{baron_team} primeiro barão",
+        baron_prob,
+        "👑",
+        "segura" if baron_prob >= 0.67 else "risco",
+        "Macro de meio/fim de jogo.",
+    ))
+
+    # 3) Linhas dinâmicas de kills no estilo sportsbook
+    kills_line_main = round(exp_total_kills * 2) / 2
+    kills_line_alt = kills_line_main + (1.0 if exp_total_kills >= 29 else -1.0)
+    prob_over_main = _clip(0.50 + (exp_total_kills - kills_line_main) / 7.5)
+    prob_under_main = 1.0 - prob_over_main
+    over_main = prob_over_main >= prob_under_main
+    _push(_mk_entry(
+        f"Total de Abates {kills_line_main:.1f}",
+        f"{'Mais' if over_main else 'Menos'} de {kills_line_main:.1f}",
+        max(prob_over_main, prob_under_main),
+        "🎯",
+        "segura" if max(prob_over_main, prob_under_main) >= 0.64 else "risco",
+        f"Projeção combinada de {exp_total_kills:.1f} kills.",
+    ))
+
+    prob_over_alt = _clip(0.50 + (exp_total_kills - kills_line_alt) / 7.5)
+    prob_under_alt = 1.0 - prob_over_alt
+    over_alt = prob_over_alt >= prob_under_alt
+    _push(_mk_entry(
+        f"Total de Abates {kills_line_alt:.1f}",
+        f"{'Mais' if over_alt else 'Menos'} de {kills_line_alt:.1f}",
+        max(prob_over_alt, prob_under_alt),
+        "⚔️",
+        "risco",
+        "Linha alternativa para preço melhor.",
+    ))
+
+    # 4) Linhas dinâmicas de duração
+    dur_line_main = max(26.5, round(avg_len * 2) / 2)
+    dur_line_alt = dur_line_main + (1.0 if avg_len >= 31 else -1.0)
+    prob_over_dur = _clip(0.50 + (avg_len - dur_line_main) / 5.8)
+    prob_under_dur = 1.0 - prob_over_dur
+    over_dur = prob_over_dur >= prob_under_dur
+    _push(_mk_entry(
+        f"Duração do Mapa {dur_line_main:.1f}",
+        f"{'Mais' if over_dur else 'Menos'} de {dur_line_main:.1f} min",
+        max(prob_over_dur, prob_under_dur),
+        "⏱️",
+        "segura" if max(prob_over_dur, prob_under_dur) >= 0.64 else "risco",
+        f"Duração média projetada em {avg_len:.1f} min.",
+    ))
+
+    prob_over_dur_alt = _clip(0.50 + (avg_len - dur_line_alt) / 5.8)
+    prob_under_dur_alt = 1.0 - prob_over_dur_alt
+    over_dur_alt = prob_over_dur_alt >= prob_under_dur_alt
+    _push(_mk_entry(
+        f"Duração do Mapa {dur_line_alt:.1f}",
+        f"{'Mais' if over_dur_alt else 'Menos'} de {dur_line_alt:.1f} min",
+        max(prob_over_dur_alt, prob_under_dur_alt),
+        "⌛",
+        "risco",
+        "Linha alternativa por volatilidade do confronto.",
+    ))
+
+    # 5) Total de torres como mercado extra
+    towers_line = max(8.5, round(exp_total_towers * 2) / 2)
+    prob_over_towers = _clip(0.50 + (exp_total_towers - towers_line) / 4.5)
+    prob_under_towers = 1.0 - prob_over_towers
+    over_towers = prob_over_towers >= prob_under_towers
+    _push(_mk_entry(
+        f"Total de Torres {towers_line:.1f}",
+        f"{'Mais' if over_towers else 'Menos'} de {towers_line:.1f}",
+        max(prob_over_towers, prob_under_towers),
+        "🗼",
+        "risco",
+        "Ritmo de controle estrutural dos times.",
+    ))
+
+    # 6) Enriquecimento por previsões do Analyzer (live macro, regional, série)
+    preds = (analysis or {}).get("predictions") or []
+    for pred in preds:
+        market = str(pred.get("market") or "").strip()
+        suggestion = str(pred.get("suggestion") or "").strip()
+        probability = float(pred.get("probability") or 0.0)
+        if not market or not suggestion or probability <= 0:
+            continue
+        icon = str(pred.get("icon") or "📌")
+        bucket = "segura" if float(pred.get("confidence") or 0.0) >= 67 else "risco"
+        _push(_mk_entry(
+            market,
+            suggestion,
+            probability,
+            icon,
+            bucket,
+            str(pred.get("reason") or ""),
+        ))
 
     decisions.sort(key=lambda item: item["confidence"], reverse=True)
+    top = decisions[0] if decisions else None
     return {
         "decisions": decisions,
-        "top_pick": decisions[0] if decisions else None,
-        "safe_picks": [d for d in decisions if d["category"] == "segura"],
-        "risky_picks": [d for d in decisions if d["category"] == "risco"],
-        "tech_gap": round(gap * 100, 1),
+        "top_pick": top,
+        "safe_picks": [d for d in decisions if d["category"] == "segura"][:6],
+        "risky_picks": [d for d in decisions if d["category"] == "risco"][:6],
+        "tech_gap": round(wr_gap * 100, 1),
         "avg_duration": round(avg_len, 1),
+        "expected_kills": round(exp_total_kills, 1),
+        "expected_towers": round(exp_total_towers, 1),
     }
 
 
