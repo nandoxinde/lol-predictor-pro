@@ -712,7 +712,12 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     # Split: player (L) | mercados (R)
     col_v, col_m = st.columns([3,2])
     with col_v:
+        st.markdown(
+            '<div style="position:sticky;top:8px;z-index:30;">',
+            unsafe_allow_html=True,
+        )
         _render_video_player(twitch_channel or lc, t1, t2, lg, match=match)
+        st.markdown("</div>", unsafe_allow_html=True)
     with col_m:
         _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match, on_bet_click)
 
@@ -902,7 +907,8 @@ def _extract_youtube_embed(value: str) -> tuple[str, str]:
     return f"https://www.youtube.com/embed/{raw}?autoplay=0&rel=0", f"https://www.youtube.com/watch?v={raw}"
 
 
-LIVE_STREAM_PLAYER_KEY = "live_stream_player"
+LIVE_STREAM_PLAYER_STATE_KEY = "live_stream_player_state"
+LIVE_STREAM_PLAYER_CONTAINER_KEY = "live_stream_player"
 
 
 def _stream_match_scope(match: dict, t1: str = "", t2: str = "") -> str:
@@ -915,7 +921,7 @@ def _stream_match_scope(match: dict, t1: str = "", t2: str = "") -> str:
 
 
 def _init_live_stream_state(scope: str) -> dict:
-    state = st.session_state.get(LIVE_STREAM_PLAYER_KEY)
+    state = st.session_state.get(LIVE_STREAM_PLAYER_STATE_KEY)
     if not isinstance(state, dict) or state.get("scope") != scope:
         state = {
             "scope": scope,
@@ -928,7 +934,7 @@ def _init_live_stream_state(scope: str) -> dict:
             "button_label": "",
             "height": 340,
         }
-        st.session_state[LIVE_STREAM_PLAYER_KEY] = state
+        st.session_state[LIVE_STREAM_PLAYER_STATE_KEY] = state
     return state
 
 
@@ -1069,7 +1075,7 @@ def _render_persistent_stream_iframe(state: dict) -> None:
     if not html:
         return
     player_height = int(state.get("height") or 340)
-    with st.container(key=LIVE_STREAM_PLAYER_KEY):
+    with st.container(key=LIVE_STREAM_PLAYER_CONTAINER_KEY):
         components.html(
             html,
             height=player_height + 4,

@@ -287,10 +287,18 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
     """Gera portfólio dinâmico de entradas por perfil dos times e contexto da série."""
     del t1f, t2f, lc, bankroll, match  # compatibilidade de assinatura
 
-    def _clip(value: float, low: float = 0.05, high: float = 0.95) -> float:
+    def _clip(value: float, low: float = 0.05, high: float = 0.88) -> float:
         return float(max(low, min(high, value)))
 
-    def _mk_entry(market: str, entry: str, probability: float, icon: str, category: str, reason: str = "") -> dict:
+    def _mk_entry(
+        market: str,
+        entry: str,
+        probability: float,
+        icon: str,
+        category: str,
+        reason: str = "",
+        family: str = "generic",
+    ) -> dict:
         prob = _clip(float(probability))
         return {
             "market": market,
@@ -301,6 +309,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
             "icon": icon,
             "category": category,
             "reason": reason,
+            "family": family,
         }
 
     t1wr = float(t1s.get("winrate", 0.5) or 0.5)
@@ -343,7 +352,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
 
     # 1) Base estrutural de match winner
     if wr_gap >= 0.03:
-        prob_fav = _clip(0.52 + wr_gap * 0.95, 0.51, 0.90)
+        prob_fav = _clip(0.52 + wr_gap * 0.85, 0.51, 0.85)
         bucket = "segura" if prob_fav >= 0.67 else "risco"
         _push(_mk_entry(
             f"Vencedor — {favored}",
@@ -352,6 +361,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
             "🏆",
             bucket,
             f"Gap de WR de {wr_gap * 100:.1f} p.p.",
+            "winner",
         ))
 
     # 2) Objetivos iniciais e macro
@@ -364,6 +374,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "🩸",
         "segura" if fb_prob >= 0.66 else "risco",
         "Taxa histórica de first blood.",
+        "first_blood",
     ))
 
     fd_team = t1n if t1_fd >= t2_fd else t2n
@@ -375,6 +386,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "🐉",
         "segura" if fd_prob >= 0.67 else "risco",
         "Controle de objetivo inicial.",
+        "first_dragon",
     ))
 
     baron_team = t1n if t1_baron >= t2_baron else t2n
@@ -386,6 +398,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "👑",
         "segura" if baron_prob >= 0.67 else "risco",
         "Macro de meio/fim de jogo.",
+        "first_baron",
     ))
 
     # 3) Linhas dinâmicas de kills no estilo sportsbook
@@ -401,6 +414,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "🎯",
         "segura" if max(prob_over_main, prob_under_main) >= 0.64 else "risco",
         f"Projeção combinada de {exp_total_kills:.1f} kills.",
+        "total_kills",
     ))
 
     prob_over_alt = _clip(0.50 + (exp_total_kills - kills_line_alt) / 7.5)
@@ -413,6 +427,31 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "⚔️",
         "risco",
         "Linha alternativa para preço melhor.",
+        "total_kills_alt",
+    ))
+
+    # 3.1) Kills por time (estilo BetBoom total kills team)
+    t1_team_line = max(6.5, round((t1_kills + t2_deaths * 0.35) * 2) / 2)
+    t2_team_line = max(6.5, round((t2_kills + t1_deaths * 0.35) * 2) / 2)
+    p_t1_over = _clip(0.50 + (t1_kills - t1_team_line) / 4.5, 0.40, 0.82)
+    p_t2_over = _clip(0.50 + (t2_kills - t2_team_line) / 4.5, 0.40, 0.82)
+    _push(_mk_entry(
+        f"{t1n} Total Kills {t1_team_line:.1f}",
+        f"{'Mais' if p_t1_over >= 0.5 else 'Menos'} de {t1_team_line:.1f} ({t1n})",
+        max(p_t1_over, 1.0 - p_t1_over),
+        "🎮",
+        "risco",
+        f"Produção ofensiva média de {t1n}: {t1_kills:.1f}.",
+        "team_kills_t1",
+    ))
+    _push(_mk_entry(
+        f"{t2n} Total Kills {t2_team_line:.1f}",
+        f"{'Mais' if p_t2_over >= 0.5 else 'Menos'} de {t2_team_line:.1f} ({t2n})",
+        max(p_t2_over, 1.0 - p_t2_over),
+        "🎮",
+        "risco",
+        f"Produção ofensiva média de {t2n}: {t2_kills:.1f}.",
+        "team_kills_t2",
     ))
 
     # 4) Linhas dinâmicas de duração
@@ -428,6 +467,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "⏱️",
         "segura" if max(prob_over_dur, prob_under_dur) >= 0.64 else "risco",
         f"Duração média projetada em {avg_len:.1f} min.",
+        "duration",
     ))
 
     prob_over_dur_alt = _clip(0.50 + (avg_len - dur_line_alt) / 5.8)
@@ -440,6 +480,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "⌛",
         "risco",
         "Linha alternativa por volatilidade do confronto.",
+        "duration_alt",
     ))
 
     # 5) Total de torres como mercado extra
@@ -454,6 +495,7 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         "🗼",
         "risco",
         "Ritmo de controle estrutural dos times.",
+        "towers",
     ))
 
     # 6) Enriquecimento por previsões do Analyzer (live macro, regional, série)
@@ -465,23 +507,60 @@ def generate_decision_card(t1n, t1s, t1f, t2n, t2s, t2f, lc, bankroll, analysis=
         if not market or not suggestion or probability <= 0:
             continue
         icon = str(pred.get("icon") or "📌")
-        bucket = "segura" if float(pred.get("confidence") or 0.0) >= 67 else "risco"
+        raw_conf = float(pred.get("confidence") or 0.0)
+        prob_adj = _clip(probability, 0.05, 0.87)
+        bucket = "segura" if raw_conf >= 67 else "risco"
+        low_market = market.lower()
+        family = "analyzer"
+        if "duração" in low_market:
+            family = "duration"
+        elif "kills" in low_market:
+            family = "total_kills"
+        elif "baron" in low_market:
+            family = "first_baron"
+        elif "dragon" in low_market:
+            family = "first_dragon"
+        elif "blood" in low_market:
+            family = "first_blood"
+        elif "vitória" in low_market or "moneyline" in low_market:
+            family = "winner"
         _push(_mk_entry(
             market,
             suggestion,
-            probability,
+            prob_adj,
             icon,
             bucket,
             str(pred.get("reason") or ""),
+            family,
         ))
 
+    # Portfólio final com diversidade (evita card engessado/repetitivo).
     decisions.sort(key=lambda item: item["confidence"], reverse=True)
-    top = decisions[0] if decisions else None
+    unique_by_family: list[dict] = []
+    used_families: set[str] = set()
+    for item in decisions:
+        fam = item.get("family", "generic")
+        if fam in used_families:
+            continue
+        unique_by_family.append(item)
+        used_families.add(fam)
+    if len(unique_by_family) < 6:
+        for item in decisions:
+            if item in unique_by_family:
+                continue
+            unique_by_family.append(item)
+            if len(unique_by_family) >= 8:
+                break
+
+    safe_picks = [d for d in unique_by_family if d["category"] == "segura"][:4]
+    risky_picks = [d for d in unique_by_family if d["category"] == "risco"][:4]
+    ordered = sorted(safe_picks + risky_picks, key=lambda item: item["confidence"], reverse=True)
+    top = ordered[0] if ordered else None
     return {
-        "decisions": decisions,
+        "decisions": ordered,
         "top_pick": top,
-        "safe_picks": [d for d in decisions if d["category"] == "segura"][:6],
-        "risky_picks": [d for d in decisions if d["category"] == "risco"][:6],
+        "safe_picks": safe_picks,
+        "risky_picks": risky_picks,
         "tech_gap": round(wr_gap * 100, 1),
         "avg_duration": round(avg_len, 1),
         "expected_kills": round(exp_total_kills, 1),
