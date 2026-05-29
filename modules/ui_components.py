@@ -1188,6 +1188,13 @@ def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, 
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
 def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match=None, on_bet_click=None):
+    from modules.betboom_fetcher import BetBoomFetcher, enrich_decision_card
+
+    match = match or {"team1": t1, "team2": t2}
+    match_token = hashlib.md5(f'{t1}|{t2}|{match.get("datetime", "")}'.encode()).hexdigest()[:8]
+    bb_key = f"bb_{match_token}"
+    bb_markets_key = f"bb_markets_{match_token}"
+
     top   = dc.get("top_pick")
     safe  = dc.get("safe_picks", [])
     risky = dc.get("risky_picks", [])
@@ -1199,11 +1206,76 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
         '<span style="font-size:11px;font-weight:700;color:#1565C0;letter-spacing:1px;">'
         '🎯 MERCADOS DE APOSTA</span></div>', unsafe_allow_html=True)
 
+    if bb_key not in st.session_state:
+        st.session_state[bb_key] = "https://betboom.com/sport/esports"
+
+    bb_link = st.text_input(
+        "🔗 Link da partida na BetBoom:",
+        key=bb_key,
+        placeholder="Cole o link direto da partida aqui...",
+    )
+    bet_url = bb_link.strip() if bb_link.strip().startswith("http") else "https://betboom.com/sport/esports"
+    fetcher = BetBoomFetcher()
+    ok_apify, apify_msg = fetcher.apify.verify_token()
+    if ok_apify:
+        st.caption(f"🟢 {apify_msg}")
+    else:
+        st.warning(apify_msg)
+
+    auto_fetch_key = f"bb_auto_fetch_{match_token}"
+    if ok_apify and bb_markets_key not in st.session_state and not st.session_state.get(auto_fetch_key):
+        with st.spinner("Carregando odds BetBoom via Apify..."):
+            st.session_state[bb_markets_key] = fetcher.fetch(bet_url, t1, t2)
+            st.session_state[auto_fetch_key] = True
+
+    bb_cols = st.columns([1.2, 1])
+    with bb_cols[0]:
+        if st.button("🔄 Atualizar odds BetBoom", key=f"bb_fetch_{match_token}", use_container_width=True):
+            with st.spinner("Consultando BetBoom via Apify (pode levar ~1 min)..."):
+                payload = fetcher.fetch(bet_url, t1, t2, force_refresh=True)
+                st.session_state[bb_markets_key] = payload
+                st.session_state[auto_fetch_key] = True
+    with bb_cols[1]:
+        if bb_payload := st.session_state.get(bb_markets_key):
+            if bb_payload.get("fetched_at"):
+                st.caption(f"Atualizado: {bb_payload.get('fetched_at', '')[:19].replace('T', ' ')}")
+
+    bb_payload = st.session_state.get(bb_markets_key)
+    if bb_payload:
+        if bb_payload.get("ok"):
+            dc = enrich_decision_card(dc, bb_payload.get("markets", []), t1, t2)
+            top = dc.get("top_pick")
+            safe = dc.get("safe_picks", [])
+            risky = dc.get("risky_picks", [])
+            preds = dc.get("decisions", []) or preds
+            st.success(
+                f"✅ {len(bb_payload.get('markets', []))} mercados BetBoom · "
+                f"fonte {bb_payload.get('source', 'Apify')}"
+            )
+        else:
+            st.warning(bb_payload.get("error") or "Odds BetBoom indisponíveis para este link.")
+
     if top:
         conf = top["confidence"]
         cc   = "#22C55E" if conf>=80 else ("#F59E0B" if conf>=65 else "#EF4444")
-        si   = bankroll_mgr.calculate_stake(top["probability"], 1.80, fixed_stake)
+        fair_odd = float(top.get("fair_odds") or (1 / max(top["probability"], 0.01)))
+        house_odd = float(top["house_odds"]) if top.get("house_odds") else None
+        stake_odd = house_odd or fair_odd
+        si   = bankroll_mgr.calculate_stake(top["probability"], stake_odd, fixed_stake)
         ordem = _fmt_order(top)
+        ev_pct = top.get("ev_pct")
+        ev_line = ""
+        if isinstance(ev_pct, (int, float)):
+            ev_color = "#22C55E" if ev_pct >= 5 else ("#F59E0B" if ev_pct >= 1 else "#EF4444")
+            ev_line = (
+                f'<div style="font-size:10px;color:{ev_color};text-align:center;margin-top:6px;">'
+                f'Odd casa {house_odd:.2f} · EV {ev_pct:+.1f}%</div>'
+            ) if house_odd else ""
+        odds_line = (
+            f'Odd justa {fair_odd:.2f} · Casa {house_odd:.2f}'
+            if house_odd else
+            f'Odd justa {fair_odd:.2f}'
+        )
 
         st.markdown(
             f'<div style="background:#0F1520;border:2px solid {cc}44;'
@@ -1221,25 +1293,15 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             f'padding:10px 14px;text-align:center;">'
             f'<div style="font-size:22px;font-weight:800;color:#F59E0B;">'
             f'R$ {si["stake"]:.2f}</div>'
-            f'<div style="font-size:9px;color:#3A4D65;">{si["stake_pct"]}% da banca · Odd justa {top.get("fair_odds", 1/top["probability"]):.2f}</div>'
-            f'</div></div></div>', unsafe_allow_html=True)
+            f'<div style="font-size:9px;color:#3A4D65;">{si["stake_pct"]}% da banca · {odds_line}</div>'
+            f'</div></div>{ev_line}</div>', unsafe_allow_html=True)
 
         if si["stake"] > bankroll * 0.10:
             st.warning("⚠️ Stake >10% da banca.")
 
-        # Link BetBoom editável
-        match = match or {"team1": t1, "team2": t2}
-        match_token = hashlib.md5(f'{t1}|{t2}|{match.get("datetime", "")}'.encode()).hexdigest()[:8]
-        bb_key = f"bb_{match_token}"
-        bb_link = st.text_input(
-            "🔗 Link da partida na BetBoom:",
-            value="https://betboom.com/sport/esports",
-            key=bb_key,
-            placeholder="Cole o link direto aqui...")
-        bet_url = bb_link.strip() if bb_link.strip().startswith("http") else "https://betboom.com"
         if st.button("🎲 Registrar e abrir BetBoom", key=f"betboom_register_{match_token}", use_container_width=True, type="primary"):
             if on_bet_click:
-                created, message = on_bet_click(match, top, si, 1.80, bet_url)
+                created, message = on_bet_click(match, top, si, stake_odd, bet_url)
                 if created:
                     st.success(message)
                 else:
@@ -1260,13 +1322,16 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             for d in safe[:3]:
                 cc2 = "#22C55E" if d["confidence"]>=80 else "#F59E0B"
                 subline = d.get("entry") or d.get("suggestion") or d.get("market", "")
+                fair = d.get("fair_odds", 1 / d["probability"])
+                house = d.get("house_odds")
+                odd_txt = f"justa {fair:.2f} · casa {house:.2f}" if house else f"odd {fair:.2f}"
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
                     f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · {odd_txt}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
         with c2:
@@ -1277,13 +1342,16 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             for d in risky[:3]:
                 cc2 = "#F59E0B" if d["confidence"]>=65 else "#EF4444"
                 subline = d.get("entry") or d.get("suggestion") or d.get("market", "")
+                fair = d.get("fair_odds", 1 / d["probability"])
+                house = d.get("house_odds")
+                odd_txt = f"justa {fair:.2f} · casa {house:.2f}" if house else f"odd {fair:.2f}"
                 st.markdown(
                     f'<div style="background:#090C14;border-left:2px solid {cc2};'
                     f'border-radius:0 5px 5px 0;padding:6px 10px;margin:3px 0;">'
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · odd {d.get("fair_odds", 1/d["probability"]):.2f}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · {odd_txt}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
 
@@ -1299,7 +1367,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
         sel = st.selectbox(
             "",
             [p.get("market", "Mercado") for p in preds_sorted],
-            key="oc_sel",
+            key=f"oc_sel_{match_token}",
             label_visibility="collapsed",
         )
         pred = next((p for p in preds_sorted if p.get("market") == sel), preds_sorted[0])
@@ -1314,8 +1382,12 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                 unsafe_allow_html=True,
             )
         fp   = pred["probability"]; fo = pred.get("fair_odds", round(1/fp, 2))
-        ho   = st.number_input("Odd da casa:", min_value=1.01, value=fo,
-                                step=0.05, key="oc_inp", label_visibility="collapsed")
+        default_ho = float(pred.get("house_odds") or fo)
+        ho_key = f"oc_inp_{match_token}_{hashlib.md5(sel.encode()).hexdigest()[:6]}"
+        ho   = st.number_input("Odd da casa:", min_value=1.01, value=default_ho,
+                                step=0.05, key=ho_key, label_visibility="collapsed")
+        if pred.get("house_label"):
+            st.caption(f"BetBoom: {pred.get('house_label')[:90]}")
         ev   = (fp*ho) - 1
         si   = bankroll_mgr.calculate_stake(fp, ho, fixed_stake)
         bc   = "#22C55E" if ev>=.05 else ("#F59E0B" if ev>=.01 else "#EF4444")
@@ -1329,9 +1401,10 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
             f'<span style="font-size:12px;font-weight:700;color:{bc};">{bl}</span>'
             f'<span style="font-size:10px;color:#3A4D65;">EV {ev*100:+.1f}%</span></div>',
             unsafe_allow_html=True)
-        cc1, cc2 = st.columns(2)
+        cc1, cc2, cc3 = st.columns(3)
         cc1.metric("Odd Justa", f"{fo:.2f}")
-        cc2.metric("Stake", f"R${si['stake']:.2f}")
+        cc2.metric("Odd Casa", f"{ho:.2f}")
+        cc3.metric("Stake", f"R${si['stake']:.2f}")
 
 # ─── Stats comparativo ────────────────────────────────────────────────
 def _positive_stat(stats: dict, key: str, fallback: float) -> float:

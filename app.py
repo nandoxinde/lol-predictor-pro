@@ -17,7 +17,10 @@ from urllib.parse import urlparse
 import pandas as pd
 import streamlit as st
 
+from modules.config import load_local_env
 from modules.analyzer import MatchAnalyzer
+
+load_local_env()
 from modules.auth import (
     _load_profile,
     check_auth,

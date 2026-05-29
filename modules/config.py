@@ -20,11 +20,25 @@ def load_local_env(path: str = ".env") -> None:
 def get_secret(name: str, default: str = "") -> str:
     """Busca segredo em variável de ambiente ou st.secrets."""
     load_local_env()
-    value = os.environ.get(name)
-    if value:
-        return value
+    aliases = {
+        "APIFY_TOKEN": ("APIFY_TOKEN", "APIFY_API_TOKEN", "APIFY_API_KEY"),
+        "ODDSPAPI_KEY": ("ODDSPAPI_KEY", "ODDSPAPI_API_KEY", "ODDS_PAPI_KEY", "ODDSPAPI_TOKEN"),
+    }
+    keys = aliases.get(name, (name,))
+    for key in keys:
+        value = os.environ.get(key)
+        if value:
+            return value
     try:
         import streamlit as st
-        return str(st.secrets.get(name, default))
+        for key in keys:
+            value = st.secrets.get(key)
+            if value:
+                return str(value)
     except Exception:
-        return default
+        pass
+    return default
+
+
+def get_apify_token() -> str:
+    return get_secret("APIFY_TOKEN")
