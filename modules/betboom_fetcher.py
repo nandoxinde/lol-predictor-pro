@@ -443,6 +443,66 @@ def enrich_decision_card(dc: dict, markets: list[dict], team1: str, team2: str) 
     }
 
 
+def is_direct_betboom_url(url: str) -> bool:
+    """True quando o link parece ser de partida específica, não a listagem genérica."""
+    normalized = (url or "").strip().lower().rstrip("/")
+    if not normalized.startswith("http") or "betboom.com" not in normalized:
+        return False
+    generic_paths = (
+        "https://betboom.com",
+        "https://betboom.com/sport/esports",
+        "https://www.betboom.com",
+        "https://www.betboom.com/sport/esports",
+    )
+    return normalized not in generic_paths
+
+
+def apply_schedule_odds_fallback(dc: dict, match: dict | None, team1: str, team2: str) -> dict:
+    """Preenche ML com odds da agenda (OddsPapi) quando BetBoom ainda não respondeu."""
+    match = match or {}
+    odd1 = match.get("odds_team1")
+    odd2 = match.get("odds_team2")
+    if not odd1 or not odd2:
+        return dc
+
+    source = match.get("odds_source", "OddsPapi")
+
+    def _inject(decision: dict | None) -> dict | None:
+        if not decision or decision.get("house_odds"):
+            return decision
+        if str(decision.get("family") or "") not in {"winner", "generic"}:
+            if "vencedor" not in str(decision.get("market", "")).lower():
+                return decision
+        team = _decision_team(decision, team1, team2)
+        house_odd = None
+        if team == "team1":
+            house_odd = float(odd1)
+        elif team == "team2":
+            house_odd = float(odd2)
+        else:
+            entry = _norm(str(decision.get("entry") or decision.get("market") or ""))
+            if _norm(team1) in entry:
+                house_odd = float(odd1)
+            elif _norm(team2) in entry:
+                house_odd = float(odd2)
+        if not house_odd:
+            return decision
+        enriched = dict(decision)
+        prob = float(enriched.get("probability") or 0)
+        enriched["house_odds"] = round(house_odd, 2)
+        enriched["house_source"] = source
+        enriched["house_label"] = f"ML {source}"
+        enriched["ev_pct"] = round((prob * house_odd - 1) * 100, 1)
+        enriched["has_value"] = enriched["ev_pct"] >= 1.0
+        return enriched
+
+    decisions = [_inject(item) or item for item in dc.get("decisions", [])]
+    safe = [_inject(item) or item for item in dc.get("safe_picks", [])]
+    risky = [_inject(item) or item for item in dc.get("risky_picks", [])]
+    top = _inject(dc.get("top_pick")) if dc.get("top_pick") else None
+    return {**dc, "decisions": decisions, "safe_picks": safe, "risky_picks": risky, "top_pick": top}
+
+
 class BetBoomFetcher:
     def __init__(self, apify: ApifyClient | None = None):
         self.apify = apify or ApifyClient()

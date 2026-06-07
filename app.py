@@ -36,6 +36,7 @@ from modules.bankroll import (
     settle_pending_bets,
 )
 from modules.data_fetcher import DataFetcher, LEAGUE_CONFIDENCE_CAP, now_brt
+from modules.data_stack import DataStack
 from modules.odds_fetcher import OddsPapiClient, odds_pair_key
 from modules.stats_engine import get_roster
 from modules.ui_components import (
@@ -47,6 +48,7 @@ from modules.ui_components import (
     render_hero,
     render_match_list,
     render_operation_room,
+    render_data_stack_panel,
     render_sidebar_navigation,
     render_wiki_tab,
 )
@@ -915,12 +917,15 @@ if st.session_state.selected_match:
     }
     cap = LEAGUE_CONFIDENCE_CAP.get(match.get("league_tier", 2), 0.9)
     analysis = analyzer.analyze_match(match, markets, min(70, cap * 100))
+    analysis = DataStack(fetcher).enrich_analysis(match, analysis)
     roster1 = get_roster(match["team1"], match.get("league_code", "_unknown"))
     roster2 = get_roster(match["team2"], match.get("league_code", "_unknown"))
     twitch_channel = st.session_state.twitch_custom or match.get("league_code", "_unknown")
     live_stats = {}
     if match.get("state") == "inProgress" and match.get("lolesports_game_id"):
-        live_stats = fetcher.fetch_lolesports_live_stats(match.get("lolesports_game_id"))
+        live_stats = fetcher.polish_live_stats(
+            fetcher.fetch_lolesports_live_stats(match.get("lolesports_game_id"))
+        )
     render_operation_room(
         match,
         analysis,
@@ -1002,8 +1007,16 @@ live_count = sum(1 for match in all_matches if match.get("state") == "inProgress
 next_count = max(0, len(all_matches) - live_count)
 with st.container():
     st.markdown('<div class="premium-title">LOL PREDICTOR PRO</div>', unsafe_allow_html=True)
-    odds_status = "OddsPapi conectado 🟢" if oddspapi_odds else "OddsPapi sem odds para estes jogos 🟡"
-    st.markdown(f'<div class="premium-api-status">Agenda: {source_summary or st.session_state.matches_source} · {odds_status}</div>', unsafe_allow_html=True)
+    odds_status = "OddsPapi conectado 🟢" if oddspapi_odds else "OddsPapi indisponível (limite ou sem jogos) 🟡"
+    stack = DataStack(fetcher)
+    stack_summary = stack.summary_line()
+    st.markdown(
+        f'<div class="premium-api-status">Agenda: {source_summary or st.session_state.matches_source} · '
+        f'{odds_status} · {stack_summary}</div>',
+        unsafe_allow_html=True,
+    )
+    with st.expander("🧩 Stack de fontes do analyzer", expanded=False):
+        render_data_stack_panel(compact=False)
     render_hero(live_count, next_count, source_summary or st.session_state.matches_source)
 
 LEAGUE_FILTERS = [

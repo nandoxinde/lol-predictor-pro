@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 import hashlib
 from datetime import datetime, timedelta
-from html import escape
+from html import escape, unescape
 from zoneinfo import ZoneInfo
 
 from modules.data_fetcher import parse_to_brt
@@ -17,6 +17,14 @@ TZ_BRT = ZoneInfo("America/Sao_Paulo")
 
 def _now():
     return datetime.now(tz=TZ_BRT)
+
+
+def _clean_text(value: str) -> str:
+    return unescape(str(value or ""))
+
+
+def _safe_html(value: str) -> str:
+    return escape(_clean_text(value))
 
 
 def _match_datetime_brt(match: dict) -> datetime | None:
@@ -569,7 +577,7 @@ def _render_series_score_top(match: dict, analysis: dict, series_ctx: dict) -> N
     current_map = series_ctx.get("current_map")
     best_of = series_ctx.get("best_of") or match.get("best_of", "3")
 
-    label = f"PLACAR DA SÉRIE: {escape(t1)} {s1} x {s2} {escape(t2)}"
+    label = f"PLACAR DA SÉRIE: {_safe_html(t1)} {s1} x {s2} {_safe_html(t2)}"
     map_hint = f" · Mapa {current_map} de Bo{best_of}" if current_map else ""
 
     st.markdown(
@@ -667,11 +675,66 @@ def _render_previous_map_history(match: dict, analysis: dict, series_ctx: dict) 
             st.caption("Campeões do mapa anterior indisponíveis no feed oficial neste momento.")
 
 
+def render_data_stack_panel(compact: bool = False) -> None:
+    """Painel da arquitetura de fontes (camadas do analyzer)."""
+    from modules.data_stack import DataStack
+
+    rows = DataStack().layer_status()
+    if compact:
+        active = sum(1 for row in rows if row.get("ok"))
+        st.caption(f"🧩 Stack de fontes: {active}/{len(rows)} camadas ativas")
+        return
+
+    header = (
+        '<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:8px;'
+        'padding:8px 12px;margin:8px 0 6px;">'
+        '<span style="font-size:10px;font-weight:800;color:#1565C0;letter-spacing:1px;">'
+        '🧩 STACK DE FONTES DO ANALYZER</span></div>'
+    )
+    st.markdown(header, unsafe_allow_html=True)
+
+    for row in rows:
+        st.markdown(
+            f'{row.get("icon", "⚪")} **{row.get("camada", "")}** · '
+            f'{_safe_html(row.get("fonte", ""))} — {_safe_html(row.get("detail", ""))}',
+            unsafe_allow_html=False,
+        )
+
+
+def _render_draft_context(analysis: dict, t1: str, t2: str) -> None:
+    draft = analysis.get("draft_context") or {}
+    if draft.get("status") != "ok":
+        return
+    pool1 = draft.get("team1") or {}
+    pool2 = draft.get("team2") or {}
+    if not (pool1.get("champions") or pool2.get("champions")):
+        return
+
+    st.markdown(
+        '<div style="font-size:10px;font-weight:700;color:#8B5CF6;'
+        'letter-spacing:1px;margin:10px 0 6px;">🎮 POOL DE CAMPEÕES RECENTES (Leaguepedia)</div>',
+        unsafe_allow_html=True,
+    )
+    c1, c2 = st.columns(2)
+    for col, team, pool in ((c1, t1, pool1), (c2, t2, pool2)):
+        with col:
+            champs = ", ".join(
+                f"{item['champion']} ({item['games']})"
+                for item in (pool.get("champions") or [])[:6]
+            ) or "—"
+            st.markdown(
+                f'<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:8px;'
+                f'padding:8px 10px;font-size:11px;color:#C8D4E8;">'
+                f'<b>{_safe_html(team)}</b><br><span style="color:#5A7090;">{escape(champs)}</span></div>',
+                unsafe_allow_html=True,
+            )
+
+
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                            roster_t1, roster_t2, bankroll, target,
                            twitch_channel="", live_stats=None, on_bet_click=None):
     from modules.data_fetcher import DataFetcher, generate_decision_card
-    t1  = match["team1"]; t2 = match["team2"]
+    t1  = _clean_text(match["team1"]); t2 = _clean_text(match["team2"])
     series_ctx = _resolve_series_context(match, analysis)
     match = {**match, "series_context": series_ctx, "series_score": series_ctx.get("series_score")}
     lg  = match.get("league_display", match.get("league",""))
@@ -694,13 +757,19 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
                   '🔴 AO VIVO</span>' if is_live else "")
         st.markdown(
             f'<div style="padding:4px 0;">{live_b}'
-            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{t1}</span>'
+            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{_safe_html(t1)}</span>'
             f'<span style="color:#1A2D4A;font-size:15px;margin:0 10px;">vs</span>'
-            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{t2}</span>'
+            f'<span style="font-size:17px;font-weight:800;color:#C8D4E8;">{_safe_html(t2)}</span>'
             f'<span style="font-size:11px;color:#3A4D65;margin-left:12px;">'
             f'{lg} · Bo{bo}</span></div>', unsafe_allow_html=True)
 
     _render_series_score_top(match, analysis, series_ctx)
+
+    if not is_live:
+        st.info(
+            "⏳ Partida ainda não começou — **não precisa esperar o início** para buscar odds. "
+            "Abra a partida na BetBoom, cole o link direto aqui ao lado e clique em **Atualizar odds BetBoom**."
+        )
 
     st.markdown('<hr style="margin:8px 0 12px;">', unsafe_allow_html=True)
 
@@ -727,6 +796,10 @@ def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
     if live_stats:
         st.markdown('<hr style="margin:12px 0;">', unsafe_allow_html=True)
     _render_series_memory(analysis, t1, t2)
+    _render_draft_context(analysis, t1, t2)
+
+    with st.expander("🧩 Stack de fontes do analyzer", expanded=False):
+        render_data_stack_panel(compact=False)
 
     # Stats + Rosters
     cs, cr = st.columns(2)
@@ -1188,13 +1261,14 @@ def _render_video_player(channel_or_code: str, t1="", t2="", lg="", height=340, 
 
 # ─── Painel de Mercados ───────────────────────────────────────────────
 def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, match=None, on_bet_click=None):
-    from modules.betboom_fetcher import BetBoomFetcher, enrich_decision_card
+    from modules.betboom_fetcher import BetBoomFetcher, enrich_decision_card, apply_schedule_odds_fallback, is_direct_betboom_url
 
     match = match or {"team1": t1, "team2": t2}
     match_token = hashlib.md5(f'{t1}|{t2}|{match.get("datetime", "")}'.encode()).hexdigest()[:8]
     bb_key = f"bb_{match_token}"
     bb_markets_key = f"bb_markets_{match_token}"
 
+    dc = apply_schedule_odds_fallback(dc, match, t1, t2)
     top   = dc.get("top_pick")
     safe  = dc.get("safe_picks", [])
     risky = dc.get("risky_picks", [])
@@ -1220,10 +1294,20 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
     if ok_apify:
         st.caption(f"🟢 {apify_msg}")
     else:
-        st.warning(apify_msg)
+        st.warning(
+            f"{apify_msg} "
+            "Local: confira `.env` e **reinicie o Streamlit**. "
+            "Nuvem: adicione `APIFY_TOKEN` em *Settings → Secrets*."
+        )
+
+    if not is_direct_betboom_url(bet_url):
+        st.info(
+            "Cole o **link direto da partida** na BetBoom para buscar kills, duração, first blood etc. "
+            "A página genérica `/sport/esports` não traz mercados do jogo."
+        )
 
     auto_fetch_key = f"bb_auto_fetch_{match_token}"
-    if ok_apify and bb_markets_key not in st.session_state and not st.session_state.get(auto_fetch_key):
+    if ok_apify and is_direct_betboom_url(bet_url) and bb_markets_key not in st.session_state and not st.session_state.get(auto_fetch_key):
         with st.spinner("Carregando odds BetBoom via Apify..."):
             st.session_state[bb_markets_key] = fetcher.fetch(bet_url, t1, t2)
             st.session_state[auto_fetch_key] = True
@@ -1298,6 +1382,10 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
 
         if si["stake"] > bankroll * 0.10:
             st.warning("⚠️ Stake >10% da banca.")
+        elif si["stake"] <= 0 and bankroll <= 0:
+            st.caption("💡 Sincronize sua banca em **Gestão de Banca** para calcular stakes.")
+        elif si["stake"] <= 0 and not house_odd:
+            st.caption("💡 Busque odds BetBoom (link direto da partida) para ver EV e stake com odd real.")
 
         if st.button("🎲 Registrar e abrir BetBoom", key=f"betboom_register_{match_token}", use_container_width=True, type="primary"):
             if on_bet_click:
@@ -1331,7 +1419,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · {odd_txt}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{_safe_html(str(subline))[:44]} · {odd_txt}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
         with c2:
@@ -1351,7 +1439,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                     f'<div style="font-size:11px;color:#C8D4E8;font-weight:700;">'
                     f'{d.get("icon","")} {_fmt_order(d)[:24]}</div>'
                     f'<div style="display:flex;justify-content:space-between;margin-top:2px;">'
-                    f'<span style="font-size:9px;color:#3A4D65;">{escape(str(subline))[:44]} · {odd_txt}</span>'
+                    f'<span style="font-size:9px;color:#3A4D65;">{_safe_html(str(subline))[:44]} · {odd_txt}</span>'
                     f'<span style="color:{cc2};font-weight:800;font-size:12px;">'
                     f'{d["confidence"]:.0f}%</span></div></div>', unsafe_allow_html=True)
 
@@ -1377,7 +1465,7 @@ def _render_markets(dc, analysis, bankroll_mgr, fixed_stake, bankroll, t1, t2, m
                 f'<div style="background:#131926;border:1px solid #1A2D4A;border-radius:8px;'
                 f'padding:8px 10px;margin:6px 0 8px;">'
                 f'<div style="font-size:12px;color:#C8D4E8;font-weight:800;margin-bottom:4px;">Sugestão (IA)</div>'
-                f'<div style="font-size:14px;color:#F5F7FA;font-weight:900;">{escape(sug)}</div>'
+                f'<div style="font-size:14px;color:#F5F7FA;font-weight:900;">{_safe_html(sug)}</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )

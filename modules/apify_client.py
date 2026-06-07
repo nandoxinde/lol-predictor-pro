@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from modules.config import get_apify_token
+from modules.config import get_apify_token, load_local_env
 
 APIFY_BASE = "https://api.apify.com/v2"
 DEFAULT_TIMEOUT = 180
@@ -15,6 +15,7 @@ DEFAULT_TIMEOUT = 180
 
 class ApifyClient:
     def __init__(self, token: str | None = None):
+        load_local_env()
         self.token = token if token is not None else get_apify_token()
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "LoLPredictorPro/2.0"})

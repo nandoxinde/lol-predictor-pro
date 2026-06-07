@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timedelta, timezone
+from html import unescape
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -110,7 +111,7 @@ NAME_FIX = {
 
 
 def fix_name(name: str) -> str:
-    cleaned = (name or "").strip()
+    cleaned = unescape((name or "").strip())
     return NAME_FIX.get(cleaned.lower(), cleaned)
 
 
@@ -743,6 +744,11 @@ class DataFetcher:
             }
         except Exception as exc:
             return {"status": "error", "message": exc}
+
+    @staticmethod
+    def polish_live_stats(live_stats: dict) -> dict:
+        from modules.data_dragon import enrich_live_stats_champions
+        return enrich_live_stats_champions(live_stats)
 
     def fetch_match_series_context(self, match: dict) -> dict:
         """Placar da série, subgames e resumo do mapa anterior (LoLEsports/PandaScore)."""
@@ -1983,6 +1989,69 @@ class DataFetcher:
         stats = self._summarize_cargo_stats(team_name, rows, last_n)
         _TEAM_STATS_CARGO_CACHE[cache_key] = (datetime.now(timezone.utc), stats)
         return dict(stats)
+
+    def fetch_team_champion_pool(self, team_name: str, last_n: int = 30) -> dict:
+        """Pool de campeões recentes (camada draft — Leaguepedia Cargo)."""
+        cache_key = f"champ_pool:{_team_key(team_name)}|{last_n}"
+        cached = _TEAM_STATS_CARGO_CACHE.get(cache_key)
+        if cached and (datetime.now(timezone.utc) - cached[0]).total_seconds() < TEAM_STATS_CARGO_CACHE_TTL:
+            return dict(cached[1])
+
+        rows = self._query_scoreboard_players(team_name, last_n)
+        counts: dict[str, int] = {}
+        players: dict[str, dict[str, int]] = {}
+        for row in rows:
+            champion = str(self._cargo_value(row, "Champion") or "").strip()
+            player = str(self._cargo_value(row, "Link", "Player", "Name") or "").strip()
+            if not champion:
+                continue
+            counts[champion] = counts.get(champion, 0) + 1
+            if player:
+                bucket = players.setdefault(player, {})
+                bucket[champion] = bucket.get(champion, 0) + 1
+
+        top_champs = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:12]
+        payload = {
+            "team": fix_name(team_name),
+            "games_sampled": len(rows),
+            "champions": [{"champion": name, "games": games} for name, games in top_champs],
+            "players": players,
+            "source": "Leaguepedia Cargo (ScoreboardPlayers)",
+        }
+        _TEAM_STATS_CARGO_CACHE[cache_key] = (datetime.now(timezone.utc), payload)
+        return payload
+
+    def _query_scoreboard_players(self, team_name: str, last_n: int) -> list[dict]:
+        terms = self._cargo_team_terms(team_name)
+        if not terms:
+            return []
+        where_terms = []
+        for term in terms:
+            safe = term.replace("'", "''")
+            where_terms.append(f"Team LIKE '%{safe}%'")
+        where = (
+            "(" + " OR ".join(where_terms) + ") "
+            "AND DateTime_UTC <= '" + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S") + "'"
+        )
+        params = {
+            "action": "cargoquery",
+            "tables": "ScoreboardPlayers",
+            "fields": "Team,Champion,Link,Role,DateTime_UTC,OverviewPage",
+            "where": where,
+            "order_by": "DateTime_UTC DESC",
+            "limit": str(max(last_n * 5, 50)),
+            "format": "json",
+        }
+        try:
+            response = requests.get(self.LQ_API, params=params, headers=self.LQ_HEADERS, timeout=12)
+            if response.status_code != 200:
+                return []
+            data = response.json()
+            if data.get("error"):
+                return []
+            return [row.get("title", row) for row in data.get("cargoquery", [])]
+        except Exception:
+            return []
 
     def _query_scoreboard_games(self, team_name: str, last_n: int) -> list[dict]:
         terms = self._cargo_team_terms(team_name)
