@@ -702,32 +702,112 @@ def render_data_stack_panel(compact: bool = False) -> None:
 
 
 def _render_draft_context(analysis: dict, t1: str, t2: str) -> None:
+    _render_champion_meta_panel(analysis, t1, t2)
+
+
+def _render_champion_meta_panel(analysis: dict, t1: str, t2: str) -> None:
+    from modules.champion_meta import tier_color
+
+    meta = analysis.get("champion_meta") or {}
     draft = analysis.get("draft_context") or {}
-    if draft.get("status") != "ok":
-        return
-    pool1 = draft.get("team1") or {}
-    pool2 = draft.get("team2") or {}
-    if not (pool1.get("champions") or pool2.get("champions")):
+    if meta.get("status") not in {"ok", "partial"} and draft.get("status") != "ok":
         return
 
+    region = meta.get("region", "GLOBAL")
+    patch = meta.get("patch", "")
     st.markdown(
-        '<div style="font-size:10px;font-weight:700;color:#8B5CF6;'
-        'letter-spacing:1px;margin:10px 0 6px;">🎮 POOL DE CAMPEÕES RECENTES (Leaguepedia)</div>',
+        f'<div style="font-size:10px;font-weight:700;color:#8B5CF6;'
+        f'letter-spacing:1px;margin:10px 0 6px;">'
+        f'🎮 META DE CAMPEÕES — OP.GG {escape(str(region))} · Patch {escape(str(patch))}</div>',
         unsafe_allow_html=True,
     )
-    c1, c2 = st.columns(2)
-    for col, team, pool in ((c1, t1, pool1), (c2, t2, pool2)):
-        with col:
-            champs = ", ".join(
-                f"{item['champion']} ({item['games']})"
-                for item in (pool.get("champions") or [])[:6]
-            ) or "—"
-            st.markdown(
-                f'<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:8px;'
-                f'padding:8px 10px;font-size:11px;color:#C8D4E8;">'
-                f'<b>{_safe_html(team)}</b><br><span style="color:#5A7090;">{escape(champs)}</span></div>',
-                unsafe_allow_html=True,
-            )
+
+    insights = meta.get("insights") or []
+    if insights:
+        for note in insights[:4]:
+            st.caption(f"💡 {note}")
+
+    top = meta.get("top_meta_champions") or []
+    if top:
+        chips = " ".join(
+            f'<span style="background:#131926;border:1px solid {tier_color(c.get("tier"))}55;'
+            f'color:{tier_color(c.get("tier"))};padding:2px 8px;border-radius:12px;'
+            f'font-size:10px;font-weight:800;margin:2px;">'
+            f'{escape(c.get("name",""))} {c.get("tier_label","?")}</span>'
+            for c in top[:10]
+        )
+        st.markdown(
+            f'<div style="margin:6px 0 10px;line-height:1.9;">'
+            f'<span style="font-size:10px;color:#5A7090;">Top meta patch:</span> {chips}</div>',
+            unsafe_allow_html=True,
+        )
+
+    pool1 = meta.get("team1_pool") or draft.get("team1") or {}
+    pool2 = meta.get("team2_pool") or draft.get("team2") or {}
+    comp1 = meta.get("team1_comp") or {}
+    comp2 = meta.get("team2_comp") or {}
+    live = meta.get("live_picks") or {}
+
+    if live.get("team1") or live.get("team2"):
+        st.markdown("**Picks ao vivo**", help="Campeões já lockados no mapa")
+        lc1, lc2 = st.columns(2)
+        for col, team, picks in ((lc1, t1, live.get("team1")), (lc2, t2, live.get("team2"))):
+            with col:
+                _render_champion_chip_row(team, picks, meta)
+
+    if pool1.get("champions") or pool2.get("champions"):
+        c1, c2 = st.columns(2)
+        for col, team, pool, comp in (
+            (c1, t1, pool1, comp1),
+            (c2, t2, pool2, comp2),
+        ):
+            with col:
+                style = comp.get("comp_style", "—")
+                strength = comp.get("avg_strength")
+                sub = f"Força média {strength} · estilo {style}" if strength else ""
+                rows_html = ""
+                for item in (pool.get("champions") or [])[:6]:
+                    tl = item.get("tier_label", "?")
+                    tc = tier_color(item.get("meta", {}).get("tier"))
+                    wr = item.get("win_rate")
+                    wr_txt = f" · {wr}% WR" if wr else ""
+                    rows_html += (
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'padding:3px 0;border-bottom:1px solid #1A2D4A33;">'
+                        f'<span style="color:#C8D4E8;">{escape(item.get("champion",""))} '
+                        f'<span style="color:{tc};font-weight:800;">{tl}</span></span>'
+                        f'<span style="color:#5A7090;font-size:10px;">{item.get("games",0)}j{wr_txt}</span></div>'
+                    )
+                st.markdown(
+                    f'<div style="background:#090C14;border:1px solid #1A2D4A;border-radius:8px;'
+                    f'padding:8px 10px;font-size:11px;">'
+                    f'<b>{_safe_html(team)}</b>'
+                    f'<div style="font-size:9px;color:#5A7090;margin:4px 0 6px;">{escape(sub)}</div>'
+                    f'{rows_html or "<span style=color:#5A7090>Sem pool recente</span>"}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+
+def _render_champion_chip_row(team: str, champions: list, meta: dict) -> None:
+    from modules.champion_meta import ChampionMetaEngine, tier_color
+
+    engine = ChampionMetaEngine(region=meta.get("region", "GLOBAL"))
+    chips = []
+    for champ in champions:
+        profile = engine.get_profile(champ, meta.get("region")) or {}
+        tl = profile.get("tier_label", "?")
+        tc = tier_color(profile.get("tier"))
+        chips.append(
+            f'<span style="background:#131926;border:1px solid {tc}66;color:{tc};'
+            f'padding:3px 8px;border-radius:8px;font-size:11px;font-weight:800;margin:2px;">'
+            f'{escape(str(champ))} {tl}</span>'
+        )
+    st.markdown(
+        f'<div style="margin-bottom:8px;"><b>{_safe_html(team)}</b><br>'
+        f'{"".join(chips) if chips else "<span style=color:#5A7090>Aguardando picks</span>"}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_operation_room(match, analysis, bankroll_mgr, fixed_stake,
@@ -867,15 +947,21 @@ def _render_lolesports_live_stats(match: dict, live_stats: dict) -> None:
             )
 
             rows = []
+            from modules.champion_meta import ChampionMetaEngine, tier_color
+            region = (analysis.get("champion_meta") or {}).get("region", "GLOBAL")
+            meta_engine = ChampionMetaEngine(region=region)
             for player in data.get("players") or []:
+                champ = player.get("champion", "")
+                profile = meta_engine.get_profile(champ, region) or {}
+                tier_lbl = profile.get("tier_label", "")
                 rows.append({
                     "Jogador": player.get("name", ""),
-                    "Champ": player.get("champion", ""),
+                    "Champ": f"{champ} ({tier_lbl})" if tier_lbl and tier_lbl != "?" else champ,
+                    "Meta": tier_lbl or "—",
                     "Role": player.get("role", ""),
                     "K/D/A": f'{player.get("kills",0)}/{player.get("deaths",0)}/{player.get("assists",0)}',
                     "CS": player.get("cs", 0),
                     "Gold": f'{player.get("gold",0)/1000:.1f}k',
-                    "Lvl": player.get("level", 0),
                 })
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=210)

@@ -7,6 +7,7 @@ from typing import Any
 
 from modules.apify_client import ApifyClient
 from modules.config import get_secret
+from modules.champion_meta import ChampionMetaEngine, league_to_opgg_region
 from modules.data_dragon import enrich_live_stats_champions, get_latest_version
 from modules.my_private_api import has_local_stats
 from modules.odds_fetcher import OddsPapiClient
@@ -25,7 +26,8 @@ class DataStack:
 
     LAYERS: list[dict[str, str]] = [
         {"id": "oracle", "camada": "Histórico pro", "fonte": "Oracle's Elixir", "uso": "CSV/SQLite — kills, objetivos, duração"},
-        {"id": "draft", "camada": "Draft/champions", "fonte": "Leaguepedia Cargo", "uso": "Picks recentes por time/jogador"},
+        {"id": "draft", "camada": "Draft/champions", "fonte": "Leaguepedia + OP.GG", "uso": "Pool pro + tier meta soloQ/região"},
+        {"id": "meta", "camada": "Meta patch", "fonte": "OP.GG API", "uso": "Tier S/A/B, WR, pick/ban — forte/fraco no patch"},
         {"id": "roster", "camada": "Roster/calendário", "fonte": "Leaguepedia + Liquipedia", "uso": "Elenco, BO, substituições"},
         {"id": "agenda", "camada": "Agenda oficial", "fonte": "LoLEsports + PandaScore", "uso": "Jogos, ligas, live, VOD"},
         {"id": "patch", "camada": "Patch/campeões", "fonte": "Riot Data Dragon", "uso": "Nomes de campeões, versão do patch"},
@@ -46,7 +48,14 @@ class DataStack:
         rows.append(self._row("oracle", oracle_ok, "SQLite local pronto" if oracle_ok else "Rode sync Oracle's Elixir"))
 
         draft_ok = True
-        rows.append(self._row("draft", draft_ok, "ScoreboardPlayers via Leaguepedia Cargo"))
+        rows.append(self._row("draft", draft_ok, "Pool Leaguepedia + tier OP.GG"))
+
+        try:
+            region = league_to_opgg_region("lck")
+            opgg_ok = ChampionMetaEngine(region=region).fetch_opgg_meta(region).get("ok", False)
+            rows.append(self._row("meta", opgg_ok, f"OP.GG {region} — tier/WR/pick rate"))
+        except Exception:
+            rows.append(self._row("meta", False, "OP.GG indisponível"))
 
         rows.append(self._row("roster", True, "Liquipedia + rosters locais 2025"))
 
@@ -98,13 +107,19 @@ class DataStack:
             "source": "Leaguepedia Cargo (ScoreboardPlayers)",
         }
 
-    def enrich_analysis(self, match: dict, analysis: dict) -> dict:
+    def enrich_analysis(self, match: dict, analysis: dict, live_stats: dict | None = None) -> dict:
         enriched = dict(analysis)
         t1 = match.get("team1", "")
         t2 = match.get("team2", "")
         draft = self.fetch_draft_context(t1, t2)
         if draft.get("status") == "ok":
             enriched["draft_context"] = draft
+
+        champion_ctx = ChampionMetaEngine().build_match_context(match, draft, live_stats)
+        enriched["champion_meta"] = champion_ctx
+        if champion_ctx.get("insights"):
+            enriched["alerts"] = list(enriched.get("alerts") or []) + champion_ctx["insights"]
+
         for side_key, team_name in (("team1_stats", t1), ("team2_stats", t2)):
             stats = dict(enriched.get(side_key) or {})
             if stats:
@@ -117,6 +132,25 @@ class DataStack:
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
         return enriched
+
+    def prepare_match_for_analysis(self, match: dict, live_stats: dict | None = None) -> tuple[dict, dict, dict]:
+        """Stats ajustados por meta + contexto campeões antes do analyzer."""
+        t1 = match.get("team1", "")
+        t2 = match.get("team2", "")
+        lc = match.get("league_code", "_unknown")
+        draft = self.fetch_draft_context(t1, t2)
+        champion_ctx = ChampionMetaEngine().build_match_context(match, draft, live_stats)
+        t1_stats = self.fetcher.get_team_stats(t1, lc)
+        t2_stats = self.fetcher.get_team_stats(t2, lc)
+        t1_adj, t2_adj, champ_adj = ChampionMetaEngine(
+            region=champion_ctx.get("region", "GLOBAL"),
+        ).apply_analyzer_adjustments(t1_stats, t2_stats, champion_ctx, t1, t2)
+        match_ready = {
+            **match,
+            "_stats_t1_override": t1_adj,
+            "_stats_t2_override": t2_adj,
+        }
+        return match_ready, champion_ctx, draft
 
     def summary_line(self) -> str:
         rows = self.layer_status()

@@ -916,16 +916,21 @@ if st.session_state.selected_match:
         "Gold Diff @15min": True,
     }
     cap = LEAGUE_CONFIDENCE_CAP.get(match.get("league_tier", 2), 0.9)
-    analysis = analyzer.analyze_match(match, markets, min(70, cap * 100))
-    analysis = DataStack(fetcher).enrich_analysis(match, analysis)
-    roster1 = get_roster(match["team1"], match.get("league_code", "_unknown"))
-    roster2 = get_roster(match["team2"], match.get("league_code", "_unknown"))
-    twitch_channel = st.session_state.twitch_custom or match.get("league_code", "_unknown")
+    stack = DataStack(fetcher)
     live_stats = {}
     if match.get("state") == "inProgress" and match.get("lolesports_game_id"):
         live_stats = fetcher.polish_live_stats(
             fetcher.fetch_lolesports_live_stats(match.get("lolesports_game_id"))
         )
+    match_ready, champion_ctx, draft = stack.prepare_match_for_analysis(match, live_stats)
+    analysis = analyzer.analyze_match(match_ready, markets, min(70, cap * 100))
+    analysis = stack.enrich_analysis(match, analysis, live_stats)
+    analysis["champion_meta"] = champion_ctx
+    if draft.get("status") == "ok":
+        analysis["draft_context"] = draft
+    roster1 = get_roster(match["team1"], match.get("league_code", "_unknown"))
+    roster2 = get_roster(match["team2"], match.get("league_code", "_unknown"))
+    twitch_channel = st.session_state.twitch_custom or match.get("league_code", "_unknown")
     render_operation_room(
         match,
         analysis,

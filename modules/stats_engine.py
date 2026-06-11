@@ -442,6 +442,13 @@ def get_mvp(players: list) -> dict:
     return max(players, key=lambda p: p["mvp_score"]) if players else {}
 
 
-def get_champ_winrate(player_name: str, champion: str) -> float:
+def get_champ_winrate(player_name: str, champion: str, region: str = "GLOBAL") -> float:
+    try:
+        from modules.champion_meta import ChampionMetaEngine
+        profile = ChampionMetaEngine(region=region).get_profile(champion, region)
+        if profile and profile.get("win_rate"):
+            return round(float(profile["win_rate"]) / 100.0, 2)
+    except Exception:
+        pass
     rng = np.random.RandomState(_seed(player_name, champion))
     return round(float(np.clip(rng.normal(0.56, 0.18), 0.10, 0.95)), 2)
