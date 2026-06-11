@@ -40,8 +40,14 @@ def _match_datetime_brt(match: dict) -> datetime | None:
             dt = datetime.strptime(raw_brt, fmt)
             now = _now()
             if fmt == "%d/%m %H:%M":
-                dt = dt.replace(year=now.year)
-            return dt.replace(tzinfo=TZ_BRT)
+                dt = dt.replace(year=now.year, tzinfo=TZ_BRT)
+                if dt < now - timedelta(hours=8):
+                    dt = dt.replace(year=now.year + 1)
+                if dt < now - timedelta(hours=2):
+                    dt = dt + timedelta(days=1)
+            else:
+                dt = dt.replace(tzinfo=TZ_BRT)
+            return dt
         except Exception:
             continue
     return None
@@ -492,25 +498,47 @@ def render_coupon_panel(selected_match=None, bankroll=0.0):
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Filtros de tempo ─────────────────────────────────────────────────
+def _match_in_time_window(dt: datetime, now: datetime, max_min: int) -> bool:
+    """Inclui jogos futuros e madrugada (ex.: 5h) quando filtro é curto à noite."""
+    mins = (dt - now).total_seconds() / 60
+    if -45 <= mins <= max_min:
+        return True
+    # Após 18h BRT: jogos de amanhã até 14h entram com folga extra (madrugada LPL/LCK).
+    if now.hour >= 18 and dt.date() > now.date() and dt.hour < 14:
+        return mins <= max_min + 720
+    return False
+
+
 def filter_matches_by_time(matches: list, time_filter: str) -> list:
     if time_filter == "live":
         return [m for m in matches if m.get("state") == "inProgress"]
-    if time_filter == "all":
-        return matches
-    limits = {"1h":60,"3h":180,"6h":360,"12h":720,"24h":1440,"1d":1440,"2d":2880,"3d":4320}
-    max_min = limits.get(time_filter, 9999)
     now = _now()
+    if time_filter == "all":
+        result = []
+        for m in matches:
+            if m.get("state") == "inProgress":
+                result.append(m)
+                continue
+            dt = _match_datetime_brt(m)
+            if not dt:
+                result.append(m)
+                continue
+            mins = (dt - now).total_seconds() / 60
+            # Mantém futuros + jogos das últimas 8h (não some cedo demais após começar).
+            if mins >= -480:
+                result.append(m)
+        return result
+    limits = {"1h": 90, "3h": 240, "6h": 480, "12h": 900, "24h": 1680, "1d": 1680, "2d": 3360, "3d": 5040}
+    max_min = limits.get(time_filter, 9999)
     result = []
     for m in matches:
         if m.get("state") == "inProgress":
-            result.append(m); continue
+            result.append(m)
+            continue
         dt = _match_datetime_brt(m)
         if not dt:
-            if time_filter == "all":
-                result.append(m)
             continue
-        mins = (dt - now).total_seconds() / 60
-        if -15 <= mins <= max_min:
+        if _match_in_time_window(dt, now, max_min):
             result.append(m)
     return result
 

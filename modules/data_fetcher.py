@@ -633,9 +633,9 @@ class DataFetcher:
         for match in self._fetch_lolesports_schedule():
             code = match.get("league_code", "")
             if code in LIQUIPEDIA_SCHEDULE_LEAGUES and match.get("state") != "inProgress":
+                # Só ignora se a Liquipedia já trouxe o mesmo confronto.
                 if schedule_identity_key(match) in liquipedia_keys:
                     continue
-                continue
             self._append_unique(matches, seen, match, query_norm)
 
         for match in self._fetch_pandascore_running():
@@ -1707,7 +1707,7 @@ class DataFetcher:
         parsed: list[dict] = []
         now_brt_dt = now_brt()
         window_start = (now_brt_dt - timedelta(hours=5)).astimezone(timezone.utc)
-        window_end = (now_brt_dt + timedelta(hours=72)).astimezone(timezone.utc)
+        window_end = (now_brt_dt + timedelta(hours=96)).astimezone(timezone.utc)
 
         for code, league_id in self.LS_LEAGUES.items():
             try:
@@ -1802,7 +1802,7 @@ class DataFetcher:
         """Liquipedia agenda for LCK, LPL and CBLOL (source of truth for date/teams)."""
         now_brt_dt = now_brt()
         window_start = (now_brt_dt - timedelta(hours=5)).astimezone(timezone.utc)
-        window_end = (now_brt_dt + timedelta(hours=72)).astimezone(timezone.utc)
+        window_end = (now_brt_dt + timedelta(hours=96)).astimezone(timezone.utc)
         matches: list[dict] = []
 
         for row in fetch_liquipedia_schedule_raw():
@@ -1854,7 +1854,7 @@ class DataFetcher:
         now_utc = datetime.now(timezone.utc)
         where = (
             "DateTime_UTC >= '" + now_utc.strftime("%Y-%m-%d %H:%M:%S") + "' "
-            "AND DateTime_UTC <= '" + (now_utc + timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S") + "'"
+            "AND DateTime_UTC <= '" + (now_utc + timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S") + "'"
         )
         if query.strip():
             q = query.strip().replace("'", "''")
